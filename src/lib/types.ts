@@ -1,4 +1,4 @@
-export type SectionCode = "A" | "B" | "C" | "D" | "E";
+export type SectionCode = "A" | "B" | "C" | "D" | "E" | string;
 
 export type Rack = {
   id: string;

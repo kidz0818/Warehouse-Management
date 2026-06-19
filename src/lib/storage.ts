@@ -502,7 +502,7 @@ export async function createRack(data: ShelfData, name: string): Promise<ShelfDa
     name: sectionName,
   }));
   const slots = sections.flatMap((section) =>
-    [1, 2, 3, 4, 5].map((slotNumber) => ({
+    [1].map((slotNumber) => ({
       id: `${section.id}-slot-${slotNumber}`,
       section_id: section.id,
       code: `${section.code}${slotNumber}`,
@@ -513,6 +513,63 @@ export async function createRack(data: ShelfData, name: string): Promise<ShelfDa
     racks: [...data.racks, { id: rackId, name }],
     sections: [...data.sections, ...sections],
     slots: [...data.slots, ...slots],
+  };
+  await saveLocalShelfData(nextData);
+  return nextData;
+}
+
+export async function renameRack(data: ShelfData, rackId: string, name: string): Promise<ShelfData> {
+  if (hasSupabaseEnv && supabase) {
+    const { error } = await supabase.from("racks").update({ name }).eq("id", rackId);
+    if (error) throw error;
+    return loadShelfData();
+  }
+
+  const nextData: ShelfData = {
+    ...data,
+    racks: data.racks.map((rack) => (rack.id === rackId ? { ...rack, name } : rack)),
+  };
+  await saveLocalShelfData(nextData);
+  return nextData;
+}
+
+export async function createSlot(data: ShelfData, sectionId: string, code: string): Promise<ShelfData> {
+  if (hasSupabaseEnv && supabase) {
+    const { error } = await supabase.from("slots").insert({ section_id: sectionId, code });
+    if (error) throw error;
+    return loadShelfData();
+  }
+
+  const nextData: ShelfData = {
+    ...data,
+    slots: [
+      ...data.slots,
+      {
+        id: newId("slot"),
+        section_id: sectionId,
+        code,
+      },
+    ],
+  };
+  await saveLocalShelfData(nextData);
+  return nextData;
+}
+
+export async function deleteSlot(data: ShelfData, slotId: string): Promise<ShelfData> {
+  const hasInventory = data.inventory.some((item) => item.slot_id === slotId);
+  if (hasInventory) {
+    throw new Error("这个 Slot 还有库存，先移动或删除库存后再删除 Slot。");
+  }
+
+  if (hasSupabaseEnv && supabase) {
+    const { error } = await supabase.from("slots").delete().eq("id", slotId);
+    if (error) throw error;
+    return loadShelfData();
+  }
+
+  const nextData: ShelfData = {
+    ...data,
+    slots: data.slots.filter((slot) => slot.id !== slotId),
   };
   await saveLocalShelfData(nextData);
   return nextData;

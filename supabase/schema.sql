@@ -27,8 +27,7 @@ create table if not exists slots (
   section_id uuid not null references sections(id) on delete cascade,
   code text not null,
   created_at timestamptz not null default now(),
-  unique (section_id, code),
-  constraint slots_code_is_deterministic check (code ~ '^[A-E][1-5]$')
+  unique (section_id, code)
 );
 
 create table if not exists products (
@@ -101,6 +100,10 @@ create index if not exists idx_inventory_slot_id on inventory(slot_id);
 create index if not exists idx_inventory_product_id on inventory(product_id);
 create index if not exists idx_inventory_active on inventory(slot_id, product_id) where deleted_at is null and archived_at is null;
 create index if not exists idx_inventory_movements_owner_created_at on inventory_movements(owner_id, created_at desc);
+
+do $$ begin
+  alter table slots drop constraint if exists slots_code_is_deterministic;
+end $$;
 
 do $$ begin
   if not exists (
@@ -356,11 +359,15 @@ begin
   on conflict (rack_id, code) do update set name = excluded.name;
 
   insert into slots (section_id, code)
-  select sections.id, sections.code::text || slot_number::text
+  select sections.id, sections.code::text || '1'
   from sections
   join racks on racks.id = sections.rack_id
-  cross join generate_series(1, 5) as slot_number
   where racks.owner_id = v_owner
+    and not exists (
+      select 1
+      from slots
+      where slots.section_id = sections.id
+    )
   on conflict (section_id, code) do nothing;
 end;
 $$;
