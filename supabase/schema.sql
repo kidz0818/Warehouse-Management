@@ -342,19 +342,25 @@ begin
   end if;
 
   insert into sections (rack_id, code, name)
-  values
-    (v_rack_id, 'A', '海报区'),
-    (v_rack_id, 'B', '拍立得区'),
-    (v_rack_id, 'C', '周边区'),
-    (v_rack_id, 'D', '包材区'),
-    (v_rack_id, 'E', '备用区')
+  select racks.id, section_seed.code::section_code, section_seed.name
+  from racks
+  cross join (
+    values
+      ('A', '海报区'),
+      ('B', '拍立得区'),
+      ('C', '周边区'),
+      ('D', '包材区'),
+      ('E', '备用区')
+  ) as section_seed(code, name)
+  where racks.owner_id = v_owner
   on conflict (rack_id, code) do update set name = excluded.name;
 
   insert into slots (section_id, code)
   select sections.id, sections.code::text || slot_number::text
   from sections
+  join racks on racks.id = sections.rack_id
   cross join generate_series(1, 5) as slot_number
-  where sections.rack_id = v_rack_id
+  where racks.owner_id = v_owner
   on conflict (section_id, code) do nothing;
 end;
 $$;

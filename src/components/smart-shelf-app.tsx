@@ -5,7 +5,9 @@ import {
   addInventory,
   archiveInventory,
   changeInventoryQuantity,
+  createRack,
   deleteInventory,
+  deleteRack,
   loadShelfData,
   moveInventory,
   renameSection,
@@ -36,6 +38,7 @@ export function SmartShelfApp() {
   const [addOpen, setAddOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  const [createRackOpen, setCreateRackOpen] = useState(false);
 
   useEffect(() => {
     if (!hasSupabaseEnv || !supabase) {
@@ -112,6 +115,18 @@ export function SmartShelfApp() {
     () => rackInventory.filter((item) => item.slot_id === selectedSlot?.id),
     [rackInventory, selectedSlot?.id],
   );
+
+  useEffect(() => {
+    const nextSection =
+      rackSections.find((section) => section.id === selectedSectionId) ?? rackSections[0];
+    const nextSlot =
+      rackSlots.find((slot) => slot.id === selectedSlotId) ??
+      rackSlots.find((slot) => slot.section_id === nextSection?.id) ??
+      rackSlots[0];
+
+    if (nextSection && nextSection.id !== selectedSectionId) setSelectedSectionId(nextSection.id);
+    if (nextSlot && nextSlot.id !== selectedSlotId) setSelectedSlotId(nextSlot.id);
+  }, [rackSections, rackSlots, selectedSectionId, selectedSlotId]);
 
   const searchResults = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -342,6 +357,8 @@ export function SmartShelfApp() {
               activeSlots={rackSlots}
               activeInventory={rackInventory}
               movements={data.movements ?? []}
+              onCreateRack={() => setCreateRackOpen(true)}
+              onDeleteRack={(rackId) => updateData(() => deleteRack(data, rackId))}
               onSelectWorkbench={() => setAppMode("workbench")}
             />
           )}
@@ -389,6 +406,18 @@ export function SmartShelfApp() {
           onSave={async (name) => {
             await updateData(() => renameSection(data, selectedSection.id, name));
             setRenameOpen(false);
+          }}
+        />
+      ) : null}
+
+      {createRackOpen ? (
+        <CreateRackDialog
+          isSaving={isSaving}
+          defaultName={`Rack-${data.racks.length + 1}`}
+          onClose={() => setCreateRackOpen(false)}
+          onSave={async (name) => {
+            await updateData(() => createRack(data, name));
+            setCreateRackOpen(false);
           }}
         />
       ) : null}
@@ -898,14 +927,29 @@ function InventoryPanel({
 
   return (
     <div className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)] lg:min-h-[calc(100dvh-150px)]">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-sm text-[var(--muted)]">{section?.code} {section?.name}</p>
           <h2 className="mt-1 text-2xl font-semibold">{slot?.code ?? "A2"} 库存</h2>
         </div>
-        <div className="rounded-[14px] bg-[var(--accent-soft)] px-3 py-2 text-right">
-          <p className="text-[11px] text-[var(--accent-deep)]">当前合计</p>
-          <p className="text-sm font-semibold text-[var(--accent-deep)]">{total} 件</p>
+        <div className="flex items-center gap-2">
+          <div className="rounded-[14px] bg-[var(--accent-soft)] px-3 py-2 text-right">
+            <p className="text-[11px] text-[var(--accent-deep)]">当前合计</p>
+            <p className="text-sm font-semibold text-[var(--accent-deep)]">{total} 件</p>
+          </div>
+          <button
+            className="hidden rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 text-sm font-semibold text-[var(--muted)] disabled:opacity-40 lg:block"
+            onClick={onOpenMove}
+            disabled={!inventory.length}
+          >
+            移动
+          </button>
+          <button
+            className="hidden rounded-[14px] bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white lg:block"
+            onClick={onOpenAdd}
+          >
+            添加库存
+          </button>
         </div>
       </div>
 
@@ -936,22 +980,6 @@ function InventoryPanel({
             onOpenAdd={onOpenAdd}
           />
         )}
-      </div>
-
-      <div className="mt-5 hidden rounded-[14px] border border-[var(--border)] bg-[var(--background)] p-2 lg:flex">
-        <button className="flex-1 rounded-[12px] px-4 py-3 text-sm font-medium text-[var(--muted)]" onClick={onOpenAdd}>
-          上传图片
-        </button>
-        <button
-          className="flex-1 rounded-[12px] px-4 py-3 text-sm font-medium text-[var(--muted)] disabled:opacity-40"
-          onClick={onOpenMove}
-          disabled={!inventory.length}
-        >
-          移动库存
-        </button>
-        <button className="flex-1 rounded-[12px] bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white" onClick={onOpenAdd}>
-          添加库存
-        </button>
       </div>
     </div>
   );
@@ -1071,6 +1099,8 @@ function AdminPanel({
   activeSlots,
   activeInventory,
   movements,
+  onCreateRack,
+  onDeleteRack,
   onSelectWorkbench,
 }: {
   data: ShelfData;
@@ -1079,6 +1109,8 @@ function AdminPanel({
   activeSlots: Slot[];
   activeInventory: Inventory[];
   movements: InventoryMovement[];
+  onCreateRack: () => void;
+  onDeleteRack: (rackId: string) => void;
   onSelectWorkbench: () => void;
 }) {
   const productIds = new Set(activeInventory.map((item) => item.product_id));
@@ -1106,7 +1138,7 @@ function AdminPanel({
     <div className="flex-1 px-4 py-4 md:px-6 lg:px-7 lg:py-6">
       <div className="mx-auto max-w-[1160px] space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <PanelTitle title="后台总览" subtitle="数据诊断、操作历史和整理规则" />
+          <PanelTitle title="后台总览" subtitle="管理货架、库存异常和操作历史" />
           <button
             className="rounded-[14px] bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white"
             onClick={onSelectWorkbench}
@@ -1123,31 +1155,38 @@ function AdminPanel({
           <AdminMetric label="缺图片" value={`${missingImage.length}`} detail="需要补图的商品" tone={missingImage.length ? "danger" : "normal"} />
         </div>
 
-        <div className="grid gap-5 xl:grid-cols-[1fr_390px]">
+        <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
           <section className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)]">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold">Rack 诊断</h2>
-                <p className="mt-1 text-sm text-[var(--muted)]">
-                  主工作台只显示第一组 Rack。这里保留所有可见 Rack，方便确认重复 A 的来源。
-                </p>
+                <h2 className="text-base font-semibold">货架管理</h2>
+                <p className="mt-1 text-sm text-[var(--muted)]">删除多余 Rack 会同时删除它下面的 Section、Slot 和库存。</p>
               </div>
-              <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1.5 text-xs text-[var(--muted)]">
-                共 {data.racks.length} 个 Rack
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1.5 text-xs text-[var(--muted)]">
+                  共 {data.racks.length} 个 Rack
+                </span>
+                <button
+                  className="rounded-[12px] bg-[var(--accent)] px-3 py-2 text-xs font-semibold text-white"
+                  onClick={onCreateRack}
+                >
+                  新建 Rack
+                </button>
+              </div>
             </div>
 
             <div className="mt-4 overflow-hidden rounded-[14px] border border-[var(--border)]">
-              <div className="grid grid-cols-[1fr_88px_88px_96px] bg-[var(--surface-soft)] px-3 py-2 text-xs font-medium text-[var(--muted)]">
+              <div className="grid grid-cols-[1fr_70px_70px_86px_78px] bg-[var(--surface-soft)] px-3 py-2 text-xs font-medium text-[var(--muted)]">
                 <span>Rack</span>
                 <span>Section</span>
                 <span>Slot</span>
                 <span className="text-right">库存</span>
+                <span className="text-right">操作</span>
               </div>
-              {rackDiagnostics.map(({ rack, sections, slots, quantity }) => (
+              {rackDiagnostics.map(({ rack, sections, slots, quantity, inventory }) => (
                 <div
                   key={rack.id}
-                  className="grid grid-cols-[1fr_88px_88px_96px] border-t border-[var(--border)] px-3 py-3 text-sm"
+                  className="grid grid-cols-[1fr_70px_70px_86px_78px] items-center border-t border-[var(--border)] px-3 py-3 text-sm"
                 >
                   <span className="min-w-0">
                     <span className="block truncate font-semibold">{rack.name}</span>
@@ -1156,27 +1195,50 @@ function AdminPanel({
                   <span>{sections.length}</span>
                   <span>{slots.length}</span>
                   <span className="text-right font-semibold">{quantity}</span>
+                  <span className="text-right">
+                    <button
+                      className="rounded-full px-3 py-1.5 text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)] disabled:cursor-not-allowed disabled:opacity-35"
+                      disabled={data.racks.length <= 1}
+                      onClick={() => {
+                        const confirmed = window.confirm(
+                          `删除 ${rack.name}？这会删除 ${inventory.length} 条库存记录，不能在页面内恢复。`,
+                        );
+                        if (confirmed) onDeleteRack(rack.id);
+                      }}
+                    >
+                      删除
+                    </button>
+                  </span>
                 </div>
               ))}
             </div>
-
-            {data.racks.length > 1 ? (
-              <div className="mt-4 rounded-[14px] border border-[var(--warning)] bg-[var(--warning-soft)] p-4">
-                <p className="text-sm font-semibold">你看到多个 A，是因为数据库里有多组 Rack/Section。</p>
-                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                  我已经让工作台只使用当前 Rack，所以页面不会再混在一起。是否删除空的重复 Rack 要看里面有没有库存，建议先在 Supabase SQL 里确认再清理。
-                </p>
-              </div>
-            ) : null}
           </section>
 
           <section className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)]">
-            <h2 className="text-base font-semibold">整理规则</h2>
-            <div className="mt-4 space-y-3">
-              <RuleRow title="归档库存" detail="从工作台隐藏，保留历史记录，适合暂时不用但不想丢的数据。" />
-              <RuleRow title="删除库存" detail="软删除并写入操作历史，不直接物理删除数据库行。" />
-              <RuleRow title="0 库存" detail="保留在当前 Slot，筛选“有货”时隐藏，方便以后继续加数量。" />
-              <RuleRow title="商品图片" detail="上传文件会先压缩为 WebP，再进入 Supabase Storage。" />
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold">当前货架</h2>
+              <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--accent-deep)]">
+                {activeRack?.name ?? "Rack-1"}
+              </span>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <MetricPill label="有货 Slot" value={`${activeSlots.filter((slot) => activeInventory.some((item) => item.slot_id === slot.id && item.quantity > 0)).length}`} />
+              <MetricPill label="空 Slot" value={`${Math.max(0, activeSlots.length - new Set(activeInventory.map((item) => item.slot_id)).size)}`} />
+            </div>
+            <div className="mt-4 space-y-2">
+              {activeSections.map((section) => {
+                const slotIds = new Set(activeSlots.filter((slot) => slot.section_id === section.id).map((slot) => slot.id));
+                const sectionQuantity = activeInventory
+                  .filter((item) => slotIds.has(item.slot_id))
+                  .reduce((total, item) => total + item.quantity, 0);
+
+                return (
+                  <div key={section.id} className="flex items-center justify-between rounded-[14px] bg-[var(--surface-soft)] px-3 py-2">
+                    <span className="text-sm font-semibold">{section.code} {section.name}</span>
+                    <span className="text-sm text-[var(--muted)]">{sectionQuantity} 件</span>
+                  </div>
+                );
+              })}
             </div>
           </section>
         </div>
@@ -1251,15 +1313,6 @@ function AdminMetric({
       <p className="text-xs text-[var(--muted)]">{label}</p>
       <p className="mt-2 truncate text-2xl font-semibold">{value}</p>
       <p className="mt-2 text-xs text-[var(--muted)]">{detail}</p>
-    </div>
-  );
-}
-
-function RuleRow({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div className="rounded-[14px] bg-[var(--surface-soft)] px-3 py-3">
-      <p className="text-sm font-semibold">{title}</p>
-      <p className="mt-1 text-xs leading-5 text-[var(--muted)]">{detail}</p>
     </div>
   );
 }
@@ -1553,6 +1606,38 @@ function RenameSectionDialog({
         onClick={() => onSave(name.trim())}
       >
         保存名称
+      </button>
+    </Dialog>
+  );
+}
+
+function CreateRackDialog({
+  defaultName,
+  isSaving,
+  onClose,
+  onSave,
+}: {
+  defaultName: string;
+  isSaving: boolean;
+  onClose: () => void;
+  onSave: (name: string) => void;
+}) {
+  const [name, setName] = useState(defaultName);
+
+  return (
+    <Dialog title="新建 Rack" onClose={onClose}>
+      <label className="block text-sm font-medium">Rack 名称</label>
+      <input
+        className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 outline-none focus:border-[var(--accent)]"
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+      />
+      <button
+        className="mt-5 w-full rounded-[14px] bg-[var(--accent)] px-4 py-3 font-semibold text-white disabled:opacity-40"
+        disabled={!name.trim() || isSaving}
+        onClick={() => onSave(name.trim())}
+      >
+        {isSaving ? "创建中" : "创建 Rack"}
       </button>
     </Dialog>
   );

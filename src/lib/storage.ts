@@ -416,6 +416,69 @@ export async function deleteInventory(data: ShelfData, inventoryId: string): Pro
   return nextData;
 }
 
+export async function deleteRack(data: ShelfData, rackId: string): Promise<ShelfData> {
+  if (hasSupabaseEnv && supabase) {
+    const { error } = await supabase.from("racks").delete().eq("id", rackId);
+    if (error) throw error;
+    return loadShelfData();
+  }
+
+  const deletedSections = data.sections.filter((section) => section.rack_id === rackId);
+  const deletedSectionIds = new Set(deletedSections.map((section) => section.id));
+  const deletedSlots = data.slots.filter((slot) => deletedSectionIds.has(slot.section_id));
+  const deletedSlotIds = new Set(deletedSlots.map((slot) => slot.id));
+  const nextData: ShelfData = {
+    ...data,
+    racks: data.racks.filter((rack) => rack.id !== rackId),
+    sections: data.sections.filter((section) => section.rack_id !== rackId),
+    slots: data.slots.filter((slot) => !deletedSectionIds.has(slot.section_id)),
+    inventory: data.inventory.filter((item) => !deletedSlotIds.has(item.slot_id)),
+  };
+  await saveLocalShelfData(nextData);
+  return nextData;
+}
+
+export async function createRack(data: ShelfData, name: string): Promise<ShelfData> {
+  if (hasSupabaseEnv && supabase) {
+    const user = await getCurrentUser();
+    if (!user) throw new Error("Please sign in before creating racks.");
+
+    const { error } = await supabase.from("racks").insert({ owner_id: user.id, name });
+    if (error) throw error;
+    return loadShelfData();
+  }
+
+  const rackId = newId("rack");
+  const sectionNames: Record<string, string> = {
+    A: "海报区",
+    B: "拍立得区",
+    C: "周边区",
+    D: "包材区",
+    E: "备用区",
+  };
+  const sections = Object.entries(sectionNames).map(([code, sectionName]) => ({
+    id: `${rackId}-section-${code.toLowerCase()}`,
+    rack_id: rackId,
+    code: code as ShelfData["sections"][number]["code"],
+    name: sectionName,
+  }));
+  const slots = sections.flatMap((section) =>
+    [1, 2, 3, 4, 5].map((slotNumber) => ({
+      id: `${section.id}-slot-${slotNumber}`,
+      section_id: section.id,
+      code: `${section.code}${slotNumber}`,
+    })),
+  );
+  const nextData: ShelfData = {
+    ...data,
+    racks: [...data.racks, { id: rackId, name }],
+    sections: [...data.sections, ...sections],
+    slots: [...data.slots, ...slots],
+  };
+  await saveLocalShelfData(nextData);
+  return nextData;
+}
+
 export async function renameSection(
   data: ShelfData,
   sectionId: string,
