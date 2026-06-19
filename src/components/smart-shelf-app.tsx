@@ -270,7 +270,7 @@ export function SmartShelfApp() {
           </div>
 
           {appMode === "table" ? (
-            <div className="grid flex-1 gap-4 px-4 py-4 md:px-6 lg:grid-cols-[minmax(620px,1fr)_380px] lg:gap-6 lg:px-7 lg:py-6">
+            <div className="grid flex-1 gap-4 px-4 py-4 md:px-6 xl:grid-cols-[minmax(620px,1fr)_380px] lg:gap-6 lg:px-7 lg:py-6">
               <section>
                 <InventoryTablePanel
                   rackName={rack?.name ?? "Rack-1"}
@@ -474,21 +474,20 @@ function FullScreenStatus({ title, subtitle }: { title: string; subtitle: string
 
 function AuthGate() {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const signIn = async () => {
-    if (!supabase || !email.trim()) return;
+  const signIn = async (mode: "login" | "signup") => {
+    if (!supabase || !email.trim() || !password) return;
     setIsSubmitting(true);
     setMessage("");
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: {
-        emailRedirectTo: window.location.origin,
-      },
-    });
+    const { error } =
+      mode === "signup"
+        ? await supabase.auth.signUp({ email: email.trim(), password })
+        : await supabase.auth.signInWithPassword({ email: email.trim(), password });
     setIsSubmitting(false);
-    setMessage(error ? error.message : "登录链接已发送，请打开邮箱完成登录。");
+    setMessage(error ? error.message : mode === "signup" ? "账号已创建，如果 Supabase 要求邮箱确认，请先确认邮箱。" : "");
   };
 
   return (
@@ -497,7 +496,7 @@ function AuthGate() {
         <AppMark />
         <h1 className="mt-5 text-xl font-semibold">登录 Smart Shelf</h1>
         <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-          这个库存系统只给你自己使用。请输入 Supabase Auth 允许登录的邮箱。
+          这个库存系统只给你自己使用。输入邮箱和密码即可进入。
         </p>
         <label className="mt-5 block text-sm font-medium">邮箱</label>
         <input
@@ -507,12 +506,27 @@ function AuthGate() {
           onChange={(event) => setEmail(event.target.value)}
           placeholder="you@example.com"
         />
+        <label className="mt-4 block text-sm font-medium">密码</label>
+        <input
+          className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 outline-none focus:border-[var(--accent)]"
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder="输入密码"
+        />
         <button
           className="mt-4 w-full rounded-[14px] bg-[var(--accent)] px-4 py-3 font-semibold text-white disabled:opacity-40"
-          disabled={!email.trim() || isSubmitting}
-          onClick={signIn}
+          disabled={!email.trim() || !password || isSubmitting}
+          onClick={() => signIn("login")}
         >
-          {isSubmitting ? "发送中" : "发送登录链接"}
+          {isSubmitting ? "登录中" : "登录"}
+        </button>
+        <button
+          className="mt-2 w-full rounded-[14px] bg-[var(--surface-soft)] px-4 py-3 text-sm font-semibold text-[var(--muted)] disabled:opacity-40"
+          disabled={!email.trim() || !password || isSubmitting}
+          onClick={() => signIn("signup")}
+        >
+          首次使用，创建账号
         </button>
         {message ? <p className="mt-3 text-sm leading-6 text-[var(--muted)]">{message}</p> : null}
       </section>
@@ -564,7 +578,7 @@ function TopBar({
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--background)]/94 px-4 py-3 backdrop-blur md:px-6 lg:px-7">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <AppMark />
           <div className="min-w-0">
@@ -575,9 +589,9 @@ function TopBar({
           </div>
         </div>
 
-        <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+        <div className="grid gap-2 sm:grid-cols-[minmax(160px,1fr)_auto_auto] lg:flex lg:flex-1 lg:flex-wrap lg:items-center lg:justify-end">
           <select
-            className="min-h-10 rounded-[14px] border border-[var(--border)] bg-white px-3 text-sm font-semibold outline-none focus:border-[var(--accent)]"
+            className="min-h-10 min-w-0 rounded-[14px] border border-[var(--border)] bg-white px-3 text-sm font-semibold outline-none focus:border-[var(--accent)]"
             value={selectedRackId}
             onChange={(event) => onSelectRack(event.target.value)}
           >
@@ -593,7 +607,7 @@ function TopBar({
           <button className="rounded-[14px] border border-[var(--border)] bg-white px-3 py-2 text-sm font-semibold text-[var(--muted)]" onClick={onCreateRack}>
             新建 Rack
           </button>
-          <div className="grid grid-cols-3 rounded-[14px] border border-[var(--border)] bg-white p-1">
+          <div className="grid grid-cols-3 rounded-[14px] border border-[var(--border)] bg-white p-1 sm:col-span-2 lg:col-span-1">
             {[
               ["table", "库存表"],
               ["gallery", "图片"],
@@ -658,7 +672,7 @@ function SearchAndFilters({
           onChange={(event) => onQueryChange(event.target.value)}
           placeholder="搜索商品名，快速定位 Slot"
         />
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {[
             ["all", "全部"],
             ["inStock", "有货"],
@@ -766,7 +780,34 @@ function InventoryTablePanel({
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="divide-y divide-[var(--border)] lg:hidden">
+        {!isReady ? (
+          <div className="p-4">
+            <SkeletonRows />
+          </div>
+        ) : rows.length ? (
+          rows.map(({ item, slot, section }) => (
+            <InventoryMobileCard
+              key={item.id}
+              item={item}
+              slot={slot}
+              section={section}
+              slots={slots}
+              onOpenDetail={onOpenDetail}
+              onChangeQuantity={onChangeQuantity}
+              onMoveInventory={onMoveInventory}
+              onArchive={onArchive}
+              onDelete={onDelete}
+            />
+          ))
+        ) : (
+          <div className="p-4">
+            <EmptySlotState slotCode="库存总表" filterMode={filterMode} onOpenAdd={onOpenAdd} />
+          </div>
+        )}
+      </div>
+
+      <div className="hidden overflow-x-auto lg:block">
         <div className="min-w-[900px]">
           <div className="grid grid-cols-[minmax(220px,1.25fr)_120px_96px_120px_150px_170px] bg-[var(--surface-soft)] px-4 py-2 text-xs font-medium text-[var(--muted)]">
             <span>商品</span>
@@ -893,6 +934,101 @@ function InventoryTableRow({
         </button>
       </div>
     </div>
+  );
+}
+
+function InventoryMobileCard({
+  item,
+  slot,
+  section,
+  slots,
+  onOpenDetail,
+  onChangeQuantity,
+  onMoveInventory,
+  onArchive,
+  onDelete,
+}: {
+  item: Inventory;
+  slot?: Slot;
+  section?: Section;
+  slots: Slot[];
+  onOpenDetail: (inventoryId: string) => void;
+  onChangeQuantity: (inventoryId: string, delta: number) => void;
+  onMoveInventory: (inventoryId: string, targetSlotId: string) => void;
+  onArchive: (inventoryId: string) => void;
+  onDelete: (inventoryId: string) => void;
+}) {
+  const tone = getStockTone(item.quantity);
+
+  return (
+    <article className="p-4">
+      <div className="flex gap-3">
+        <button
+          className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-[14px] bg-[var(--surface-soft)] text-xs font-semibold text-[var(--muted)]"
+          onClick={() => onOpenDetail(item.id)}
+        >
+          {item.product.image ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={item.product.image} alt="" className="h-full w-full object-cover" />
+          ) : (
+            "照片"
+          )}
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <button className="min-w-0 text-left" onClick={() => onOpenDetail(item.id)}>
+              <p className="truncate text-base font-semibold">{item.product.name}</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">{section?.code ?? "-"} / {slot?.code ?? "-"}</p>
+            </button>
+            <StockBadge tone={tone} label={getStockLabel(item.quantity)} />
+          </div>
+
+          <div className="mt-3 grid grid-cols-[auto_1fr] gap-2">
+            <div className="flex items-center gap-1 rounded-full bg-[var(--surface-soft)] p-1">
+              <button
+                className="grid h-8 w-8 place-items-center rounded-full bg-white text-base disabled:opacity-35"
+                onClick={() => onChangeQuantity(item.id, -1)}
+                disabled={item.quantity <= 0}
+                aria-label="减少"
+              >
+                −
+              </button>
+              <span className="min-w-8 text-center text-sm font-semibold">{item.quantity}</span>
+              <button
+                className="grid h-8 w-8 place-items-center rounded-full bg-[var(--accent)] text-base text-white"
+                onClick={() => onChangeQuantity(item.id, 1)}
+                aria-label="增加"
+              >
+                +
+              </button>
+            </div>
+            <select
+              className="min-w-0 rounded-[12px] border border-[var(--border)] bg-white px-3 text-sm outline-none focus:border-[var(--accent)]"
+              value={slot?.id ?? ""}
+              onChange={(event) => onMoveInventory(item.id, event.target.value)}
+            >
+              {[...slots].sort((left, right) => left.code.localeCompare(right.code)).map((targetSlot) => (
+                <option key={targetSlot.id} value={targetSlot.id}>
+                  {targetSlot.code}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="mt-3 flex gap-1">
+            <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onOpenDetail(item.id)}>
+              查看
+            </button>
+            <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onArchive(item.id)}>
+              归档
+            </button>
+            <button className="rounded-full px-3 py-1.5 text-xs text-[var(--danger)] hover:bg-[var(--danger-soft)]" onClick={() => onDelete(item.id)}>
+              删除
+            </button>
+          </div>
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -1960,7 +2096,7 @@ function InventoryDetailDrawer({
         </div>
 
         <div className="border-t border-[var(--border)] bg-white p-4">
-          <div className="grid grid-cols-[auto_auto_1fr_auto] gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-[auto_auto_1fr_auto]">
             <button className="rounded-[14px] bg-[var(--surface-soft)] px-4 py-3 text-sm font-semibold" onClick={() => onChangeQuantity(-1)}>
               -1
             </button>
