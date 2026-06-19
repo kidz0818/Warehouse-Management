@@ -416,6 +416,45 @@ export async function deleteInventory(data: ShelfData, inventoryId: string): Pro
   return nextData;
 }
 
+export async function updateProductDetails(
+  data: ShelfData,
+  productId: string,
+  input: { name: string; image?: string | null; imageFile?: File | null },
+): Promise<ShelfData> {
+  const image = input.imageFile ? await uploadProductImage(input.imageFile) : input.image;
+
+  if (hasSupabaseEnv && supabase) {
+    const updates: { name: string; image?: string | null; archived_at: null } = {
+      name: input.name,
+      archived_at: null,
+    };
+    if (image !== undefined) updates.image = image || null;
+
+    const { error } = await supabase.from("products").update(updates).eq("id", productId);
+    if (error) throw error;
+    return loadShelfData();
+  }
+
+  const nextData: ShelfData = {
+    ...data,
+    inventory: data.inventory.map((item) =>
+      item.product_id === productId
+        ? {
+            ...item,
+            product: {
+              ...item.product,
+              name: input.name,
+              image: image !== undefined ? image || null : item.product.image,
+              archived_at: null,
+            },
+          }
+        : item,
+    ),
+  };
+  await saveLocalShelfData(nextData);
+  return nextData;
+}
+
 export async function deleteRack(data: ShelfData, rackId: string): Promise<ShelfData> {
   if (hasSupabaseEnv && supabase) {
     const { error } = await supabase.from("racks").delete().eq("id", rackId);

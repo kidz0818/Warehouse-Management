@@ -11,6 +11,7 @@ import {
   loadShelfData,
   moveInventory,
   renameSection,
+  updateProductDetails,
 } from "@/lib/storage";
 import { getCurrentUser, hasSupabaseEnv, supabase, type AuthUser } from "@/lib/supabase";
 import type { Inventory, InventoryInsert, InventoryMovement, Section, ShelfData, Slot } from "@/lib/types";
@@ -45,6 +46,7 @@ export function SmartShelfApp() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [createRackOpen, setCreateRackOpen] = useState(false);
+  const [detailInventoryId, setDetailInventoryId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!hasSupabaseEnv || !supabase) {
@@ -153,6 +155,10 @@ export function SmartShelfApp() {
     () => slotInventory.filter((item) => matchesFilter(item, filterMode)),
     [filterMode, slotInventory],
   );
+  const detailRow = useMemo(
+    () => inventoryRows.find((row) => row.item.id === detailInventoryId),
+    [detailInventoryId, inventoryRows],
+  );
 
   if (!authChecked) {
     return <FullScreenStatus title="正在检查登录状态" subtitle="Smart Shelf 正在连接 Supabase。" />;
@@ -194,6 +200,14 @@ export function SmartShelfApp() {
 
   const updateQuantity = async (inventoryId: string, delta: number) => {
     await updateData(() => changeInventoryQuantity(data, inventoryId, delta));
+  };
+
+  const moveInventoryToSlot = async (inventoryId: string, targetSlotId: string) => {
+    const current = data.inventory.find((item) => item.id === inventoryId);
+    if (!current || current.slot_id === targetSlotId) return;
+    await updateData(() => moveInventory(data, inventoryId, targetSlotId));
+    setSelectedSlotId(targetSlotId);
+    setViewMode("slot");
   };
 
   const totalForSlot = (slotId: string) =>
@@ -317,6 +331,7 @@ export function SmartShelfApp() {
                 <InventoryTablePanel
                   rackName={rack?.name ?? "Rack-1"}
                   rows={visibleInventoryRows}
+                  slots={rackSlots}
                   isReady={isReady}
                   filterMode={filterMode}
                   onSelectRow={(slot, section) => {
@@ -324,7 +339,9 @@ export function SmartShelfApp() {
                     if (slot) setSelectedSlotId(slot.id);
                     setViewMode("slot");
                   }}
+                  onOpenDetail={(inventoryId) => setDetailInventoryId(inventoryId)}
                   onChangeQuantity={updateQuantity}
+                  onMoveInventory={moveInventoryToSlot}
                   onOpenAdd={() => setAddOpen(true)}
                   onArchive={(inventoryId) => updateData(() => archiveInventory(data, inventoryId))}
                   onDelete={(inventoryId) => updateData(() => deleteInventory(data, inventoryId))}
@@ -435,6 +452,27 @@ export function SmartShelfApp() {
           onSave={async (name) => {
             await updateData(() => createRack(data, name));
             setCreateRackOpen(false);
+          }}
+        />
+      ) : null}
+
+      {detailRow ? (
+        <InventoryDetailDrawer
+          row={detailRow}
+          movements={data.movements ?? []}
+          isSaving={isSaving}
+          onClose={() => setDetailInventoryId(null)}
+          onSaveProduct={async (input) => {
+            await updateData(() => updateProductDetails(data, detailRow.item.product_id, input));
+          }}
+          onChangeQuantity={(delta) => updateQuantity(detailRow.item.id, delta)}
+          onArchive={async () => {
+            await updateData(() => archiveInventory(data, detailRow.item.id));
+            setDetailInventoryId(null);
+          }}
+          onDelete={async () => {
+            await updateData(() => deleteInventory(data, detailRow.item.id));
+            setDetailInventoryId(null);
           }}
         />
       ) : null}
@@ -776,20 +814,26 @@ function SectionNavItem({
 function InventoryTablePanel({
   rackName,
   rows,
+  slots,
   isReady,
   filterMode,
   onSelectRow,
+  onOpenDetail,
   onChangeQuantity,
+  onMoveInventory,
   onOpenAdd,
   onArchive,
   onDelete,
 }: {
   rackName: string;
   rows: InventoryRowData[];
+  slots: Slot[];
   isReady: boolean;
   filterMode: FilterMode;
   onSelectRow: (slot?: Slot, section?: Section) => void;
+  onOpenDetail: (inventoryId: string) => void;
   onChangeQuantity: (inventoryId: string, delta: number) => void;
+  onMoveInventory: (inventoryId: string, targetSlotId: string) => void;
   onOpenAdd: () => void;
   onArchive: (inventoryId: string) => void;
   onDelete: (inventoryId: string) => void;
@@ -815,12 +859,13 @@ function InventoryTablePanel({
       </div>
 
       <div className="overflow-x-auto">
-        <div className="min-w-[760px]">
-          <div className="grid grid-cols-[minmax(220px,1.25fr)_150px_96px_120px_170px] bg-[var(--surface-soft)] px-4 py-2 text-xs font-medium text-[var(--muted)]">
+        <div className="min-w-[900px]">
+          <div className="grid grid-cols-[minmax(220px,1.25fr)_120px_96px_120px_150px_170px] bg-[var(--surface-soft)] px-4 py-2 text-xs font-medium text-[var(--muted)]">
             <span>商品</span>
             <span>位置</span>
             <span className="text-right">数量</span>
             <span>状态</span>
+            <span>移动到</span>
             <span className="text-right">操作</span>
           </div>
           {!isReady ? (
@@ -835,7 +880,10 @@ function InventoryTablePanel({
                 slot={slot}
                 section={section}
                 onSelect={() => onSelectRow(slot, section)}
+                slots={slots}
+                onOpenDetail={onOpenDetail}
                 onChangeQuantity={onChangeQuantity}
+                onMoveInventory={onMoveInventory}
                 onArchive={onArchive}
                 onDelete={onDelete}
               />
@@ -855,24 +903,30 @@ function InventoryTableRow({
   item,
   slot,
   section,
+  slots,
   onSelect,
+  onOpenDetail,
   onChangeQuantity,
+  onMoveInventory,
   onArchive,
   onDelete,
 }: {
   item: Inventory;
   slot?: Slot;
   section?: Section;
+  slots: Slot[];
   onSelect: () => void;
+  onOpenDetail: (inventoryId: string) => void;
   onChangeQuantity: (inventoryId: string, delta: number) => void;
+  onMoveInventory: (inventoryId: string, targetSlotId: string) => void;
   onArchive: (inventoryId: string) => void;
   onDelete: (inventoryId: string) => void;
 }) {
   const tone = getStockTone(item.quantity);
 
   return (
-    <div className="grid grid-cols-[minmax(220px,1.25fr)_150px_96px_120px_170px] items-center border-t border-[var(--border)] px-4 py-3 text-sm">
-      <button className="flex min-w-0 items-center gap-3 text-left" onClick={onSelect}>
+    <div className="grid grid-cols-[minmax(220px,1.25fr)_120px_96px_120px_150px_170px] items-center border-t border-[var(--border)] px-4 py-3 text-sm">
+      <button className="flex min-w-0 items-center gap-3 text-left" onClick={() => onOpenDetail(item.id)}>
         <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-[var(--surface-soft)] text-xs font-semibold text-[var(--muted)]">
           {item.product.image ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -908,8 +962,19 @@ function InventoryTableRow({
         </button>
       </div>
       <StockBadge tone={tone} label={getStockLabel(item.quantity)} />
+      <select
+        className="w-full rounded-[10px] border border-[var(--border)] bg-white px-2 py-2 text-xs outline-none focus:border-[var(--accent)]"
+        value={slot?.id ?? ""}
+        onChange={(event) => onMoveInventory(item.id, event.target.value)}
+      >
+        {[...slots].sort((left, right) => left.code.localeCompare(right.code)).map((targetSlot) => (
+          <option key={targetSlot.id} value={targetSlot.id}>
+            {targetSlot.code}
+          </option>
+        ))}
+      </select>
       <div className="flex justify-end gap-1">
-        <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={onSelect}>
+        <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onOpenDetail(item.id)}>
           查看
         </button>
         <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onArchive(item.id)}>
@@ -1732,6 +1797,153 @@ function CreateRackDialog({
         {isSaving ? "创建中" : "创建 Rack"}
       </button>
     </Dialog>
+  );
+}
+
+function InventoryDetailDrawer({
+  row,
+  movements,
+  isSaving,
+  onClose,
+  onSaveProduct,
+  onChangeQuantity,
+  onArchive,
+  onDelete,
+}: {
+  row: InventoryRowData;
+  movements: InventoryMovement[];
+  isSaving: boolean;
+  onClose: () => void;
+  onSaveProduct: (input: { name: string; image?: string | null; imageFile?: File | null }) => void;
+  onChangeQuantity: (delta: number) => void;
+  onArchive: () => void;
+  onDelete: () => void;
+}) {
+  const [name, setName] = useState(row.item.product.name);
+  const [image, setImage] = useState(row.item.product.image ?? "");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const relatedMovements = movements.filter(
+    (movement) =>
+      movement.inventory_id === row.item.id ||
+      movement.product_id === row.item.product_id ||
+      movement.product_name === row.item.product.name,
+  );
+
+  useEffect(() => {
+    setName(row.item.product.name);
+    setImage(row.item.product.image ?? "");
+    setImageFile(null);
+  }, [row.item.id, row.item.product.image, row.item.product.name]);
+
+  return (
+    <div className="fixed inset-0 z-40 bg-black/20">
+      <aside className="ml-auto flex h-full w-full max-w-[440px] flex-col border-l border-[var(--border)] bg-[var(--background)] shadow-[var(--shadow)]">
+        <div className="flex items-center justify-between border-b border-[var(--border)] bg-white px-5 py-4">
+          <div>
+            <p className="text-sm text-[var(--muted)]">{row.section?.code ?? "-"} / {row.slot?.code ?? "-"}</p>
+            <h2 className="mt-1 text-xl font-semibold">商品详情</h2>
+          </div>
+          <button className="grid h-9 w-9 place-items-center rounded-full bg-[var(--surface-soft)] text-xl" onClick={onClose} aria-label="关闭">
+            ×
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-auto p-5">
+          <div className="overflow-hidden rounded-[18px] border border-[var(--border)] bg-white">
+            <div className="grid aspect-[4/3] place-items-center bg-[var(--surface-soft)] text-sm font-semibold text-[var(--muted)]">
+              {row.item.product.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={row.item.product.image} alt="" className="h-full w-full object-cover" />
+              ) : (
+                "暂无图片"
+              )}
+            </div>
+            <div className="p-4">
+              <div className="grid grid-cols-3 gap-2">
+                <MetricPill label="数量" value={`${row.item.quantity}`} />
+                <MetricPill label="位置" value={row.slot?.code ?? "-"} />
+                <MetricPill label="状态" value={getStockLabel(row.item.quantity)} />
+              </div>
+            </div>
+          </div>
+
+          <section className="rounded-[18px] border border-[var(--border)] bg-white p-4">
+            <h3 className="text-base font-semibold">编辑商品</h3>
+            <label className="mt-4 block text-sm font-medium">商品名称</label>
+            <input
+              className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 outline-none focus:border-[var(--accent)]"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+            <label className="mt-4 block text-sm font-medium">上传新图片</label>
+            <input
+              className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 text-sm outline-none file:mr-3 file:rounded-full file:border-0 file:bg-[var(--surface-soft)] file:px-3 file:py-1.5 file:text-sm"
+              type="file"
+              accept="image/*"
+              onChange={(event) => setImageFile(event.target.files?.[0] ?? null)}
+            />
+            <label className="mt-4 block text-sm font-medium">图片 URL</label>
+            <input
+              className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 outline-none focus:border-[var(--accent)]"
+              value={image}
+              onChange={(event) => setImage(event.target.value)}
+              placeholder="可选"
+            />
+            <button
+              className="mt-5 w-full rounded-[14px] bg-[var(--accent)] px-4 py-3 font-semibold text-white disabled:opacity-40"
+              disabled={!name.trim() || isSaving}
+              onClick={() =>
+                onSaveProduct({
+                  name: name.trim(),
+                  image: image.trim() || null,
+                  imageFile,
+                })
+              }
+            >
+              {isSaving ? "保存中" : "保存商品"}
+            </button>
+          </section>
+
+          <section className="rounded-[18px] border border-[var(--border)] bg-white p-4">
+            <h3 className="text-base font-semibold">最近记录</h3>
+            <div className="mt-3 space-y-2">
+              {relatedMovements.length ? (
+                relatedMovements.slice(0, 6).map((movement) => (
+                  <div key={movement.id} className="rounded-[14px] bg-[var(--surface-soft)] px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium">{formatMovementAction(movement.action)}</span>
+                      <span className="text-xs text-[var(--muted)]">{formatTime(movement.created_at)}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--muted)]">
+                      {movement.from_slot_code ?? "无"} → {movement.to_slot_code ?? "无"} · {movement.quantity_snapshot} 件
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <p className="rounded-[14px] bg-[var(--surface-soft)] px-3 py-3 text-sm text-[var(--muted)]">暂无操作记录</p>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <div className="border-t border-[var(--border)] bg-white p-4">
+          <div className="grid grid-cols-[auto_auto_1fr_auto] gap-2">
+            <button className="rounded-[14px] bg-[var(--surface-soft)] px-4 py-3 text-sm font-semibold" onClick={() => onChangeQuantity(-1)}>
+              -1
+            </button>
+            <button className="rounded-[14px] bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white" onClick={() => onChangeQuantity(1)}>
+              +1
+            </button>
+            <button className="rounded-[14px] bg-[var(--surface-soft)] px-4 py-3 text-sm font-semibold text-[var(--muted)]" onClick={onArchive}>
+              归档
+            </button>
+            <button className="rounded-[14px] bg-[var(--danger-soft)] px-4 py-3 text-sm font-semibold text-[var(--danger)]" onClick={onDelete}>
+              删除
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>
   );
 }
 
