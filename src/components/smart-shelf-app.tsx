@@ -231,7 +231,7 @@ export function SmartShelfApp() {
   const activeSlots = rackSlots.filter((slot) => productsForSlot(slot.id) > 0).length;
 
   return (
-    <main className="min-h-[100dvh] bg-[var(--background)] text-[var(--text)]">
+    <main className="min-h-[100dvh] text-[var(--text)]">
       <div className="mx-auto flex min-h-[100dvh] max-w-[1480px] flex-col">
         <TopBar
           racks={data.racks}
