@@ -20,6 +20,12 @@ type ViewMode = "rack" | "section" | "slot";
 type AppMode = "workbench" | "admin";
 type StockTone = "empty" | "low" | "watch" | "good";
 type FilterMode = "all" | "inStock" | "lowStock" | "missingImage";
+type InventoryRowData = {
+  item: Inventory;
+  slot?: Slot;
+  section?: Section;
+  rack?: { id: string; name: string };
+};
 
 const quantityFormatter = new Intl.NumberFormat("zh-CN");
 
@@ -39,7 +45,6 @@ export function SmartShelfApp() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [createRackOpen, setCreateRackOpen] = useState(false);
-  const [draggingInventoryId, setDraggingInventoryId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!hasSupabaseEnv || !supabase) {
@@ -125,18 +130,24 @@ export function SmartShelfApp() {
     if (nextSlot && nextSlot.id !== selectedSlotId) setSelectedSlotId(nextSlot.id);
   }, [rackSections, rackSlots, selectedSectionId, selectedSlotId]);
 
-  const searchResults = useMemo(() => {
+  const inventoryRows = useMemo<InventoryRowData[]>(() => {
+    return rackInventory.map((item) => {
+      const slot = rackSlots.find((entry) => entry.id === item.slot_id);
+      const section = rackSections.find((entry) => entry.id === slot?.section_id);
+      const rackForResult = data.racks.find((entry) => entry.id === section?.rack_id);
+      return { item, slot, section, rack: rackForResult };
+    });
+  }, [data.racks, rackInventory, rackSections, rackSlots]);
+
+  const visibleInventoryRows = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return rackInventory
-      .filter((item) => item.product.name.toLowerCase().includes(normalized))
-      .filter((item) => matchesFilter(item, filterMode))
-      .map((item) => {
-        const slot = rackSlots.find((entry) => entry.id === item.slot_id);
-        const section = rackSections.find((entry) => entry.id === slot?.section_id);
-        const rackForResult = data.racks.find((entry) => entry.id === section?.rack_id);
-        return { item, slot, section, rack: rackForResult };
-      });
-  }, [data.racks, filterMode, query, rackInventory, rackSections, rackSlots]);
+    return inventoryRows
+      .filter(({ item, slot, section }) => {
+        const location = `${section?.code ?? ""} ${section?.name ?? ""} ${slot?.code ?? ""}`.toLowerCase();
+        return item.product.name.toLowerCase().includes(normalized) || location.includes(normalized);
+      })
+      .filter(({ item }) => matchesFilter(item, filterMode));
+  }, [filterMode, inventoryRows, query]);
 
   const visibleSlotInventory = useMemo(
     () => slotInventory.filter((item) => matchesFilter(item, filterMode)),
@@ -183,18 +194,6 @@ export function SmartShelfApp() {
 
   const updateQuantity = async (inventoryId: string, delta: number) => {
     await updateData(() => changeInventoryQuantity(data, inventoryId, delta));
-  };
-
-  const moveInventoryToSlot = async (inventoryId: string, targetSlotId: string) => {
-    const current = data.inventory.find((item) => item.id === inventoryId);
-    try {
-      if (!current || current.slot_id === targetSlotId) return;
-      await updateData(() => moveInventory(data, inventoryId, targetSlotId));
-      setSelectedSlotId(targetSlotId);
-      setViewMode("slot");
-    } finally {
-      setDraggingInventoryId(null);
-    }
   };
 
   const totalForSlot = (slotId: string) =>
@@ -290,7 +289,7 @@ export function SmartShelfApp() {
                   {rack?.name ?? "Rack-1"} / {selectedSection?.code} {selectedSection?.name} /{" "}
                   {selectedSlot?.code}
                 </p>
-                <h1 className="mt-1 text-2xl font-semibold tracking-normal">货架库存工作台</h1>
+                <h1 className="mt-1 text-2xl font-semibold tracking-normal">仓库库存管理</h1>
               </div>
               <div className="flex items-center gap-3">
                 <ModeSwitch appMode={appMode} onChange={setAppMode} compact />
@@ -304,7 +303,7 @@ export function SmartShelfApp() {
               <SearchAndFilters
                 query={query}
                 filterMode={filterMode}
-                results={searchResults}
+                results={visibleInventoryRows}
                 onQueryChange={setQuery}
                 onFilterChange={setFilterMode}
                 onSelectResult={selectSearchResult}
@@ -313,38 +312,43 @@ export function SmartShelfApp() {
           </div>
 
           {appMode === "workbench" ? (
-            <div className="grid flex-1 gap-4 px-4 py-4 md:px-6 lg:grid-cols-[minmax(560px,1fr)_420px] lg:gap-6 lg:px-7 lg:py-6">
-              <section className={viewMode === "rack" ? "block lg:hidden" : "hidden"}>
-                <MobileSectionList
+            <div className="grid flex-1 gap-4 px-4 py-4 md:px-6 lg:grid-cols-[minmax(620px,1fr)_380px] lg:gap-6 lg:px-7 lg:py-6">
+              <section className={viewMode === "rack" ? "block" : "hidden lg:block"}>
+                <InventoryTablePanel
+                  rackName={rack?.name ?? "Rack-1"}
+                  rows={visibleInventoryRows}
+                  isReady={isReady}
+                  filterMode={filterMode}
+                  onSelectRow={(slot, section) => {
+                    if (section) setSelectedSectionId(section.id);
+                    if (slot) setSelectedSlotId(slot.id);
+                    setViewMode("slot");
+                  }}
+                  onChangeQuantity={updateQuantity}
+                  onOpenAdd={() => setAddOpen(true)}
+                  onArchive={(inventoryId) => updateData(() => archiveInventory(data, inventoryId))}
+                  onDelete={(inventoryId) => updateData(() => deleteInventory(data, inventoryId))}
+                />
+              </section>
+
+              <section className={viewMode === "slot" ? "space-y-4" : "hidden lg:block lg:space-y-4"}>
+                <LocationOverviewPanel
                   rackName={rack?.name ?? "Rack-1"}
                   sections={rackSections}
+                  slots={rackSlots}
                   selectedSectionId={selectedSectionId}
+                  selectedSlotId={selectedSlot?.id ?? selectedSlotId}
                   totalForSection={totalForSection}
                   filledSlotsForSection={filledSlotsForSection}
-                  onSelect={selectSection}
+                  productsForSlot={productsForSlot}
+                  totalForSlot={totalForSlot}
+                  onSelectSection={selectSection}
+                  onSelectSlot={selectSlot}
                   onRename={(section) => {
                     setSelectedSectionId(section.id);
                     setRenameOpen(true);
                   }}
                 />
-              </section>
-
-              <section className={viewMode === "section" || viewMode === "slot" ? "block" : "hidden lg:block"}>
-                <RackFrontPanel
-                  rackName={rack?.name ?? "Rack-1"}
-                  sections={rackSections}
-                  slots={rackSlots}
-                  inventory={rackInventory}
-                  selectedSlotId={selectedSlot?.id ?? selectedSlotId}
-                  productsForSlot={productsForSlot}
-                  totalForSlot={totalForSlot}
-                  draggingInventoryId={draggingInventoryId}
-                  onSelectSlot={selectSlot}
-                  onDropInventory={moveInventoryToSlot}
-                />
-              </section>
-
-              <section className={viewMode === "slot" ? "space-y-4" : "hidden lg:block lg:space-y-4"}>
                 <InventoryPanel
                   slot={selectedSlot}
                   section={selectedSection}
@@ -355,8 +359,6 @@ export function SmartShelfApp() {
                   onChangeQuantity={updateQuantity}
                   onOpenAdd={() => setAddOpen(true)}
                   onOpenMove={() => setMoveOpen(true)}
-                  onDragStart={setDraggingInventoryId}
-                  onDragEnd={() => setDraggingInventoryId(null)}
                   onArchive={(inventoryId) => updateData(() => archiveInventory(data, inventoryId))}
                   onDelete={(inventoryId) => updateData(() => deleteInventory(data, inventoryId))}
                 />
@@ -771,204 +773,229 @@ function SectionNavItem({
   );
 }
 
-function MobileSectionList({
+function InventoryTablePanel({
+  rackName,
+  rows,
+  isReady,
+  filterMode,
+  onSelectRow,
+  onChangeQuantity,
+  onOpenAdd,
+  onArchive,
+  onDelete,
+}: {
+  rackName: string;
+  rows: InventoryRowData[];
+  isReady: boolean;
+  filterMode: FilterMode;
+  onSelectRow: (slot?: Slot, section?: Section) => void;
+  onChangeQuantity: (inventoryId: string, delta: number) => void;
+  onOpenAdd: () => void;
+  onArchive: (inventoryId: string) => void;
+  onDelete: (inventoryId: string) => void;
+}) {
+  const totalQuantity = rows.reduce((total, row) => total + row.item.quantity, 0);
+  const lowCount = rows.filter((row) => row.item.quantity > 0 && row.item.quantity <= 2).length;
+  const missingImage = rows.filter((row) => !row.item.product.image).length;
+
+  return (
+    <section className="rounded-[18px] border border-[var(--border)] bg-white shadow-[var(--soft-shadow)]">
+      <div className="border-b border-[var(--border)] p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <PanelTitle title="库存总表" subtitle={`${rackName} / 按商品和位置管理`} />
+          <button className="rounded-[14px] bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white" onClick={onOpenAdd}>
+            添加库存
+          </button>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <MetricPill label="当前显示" value={`${rows.length} 条`} />
+          <MetricPill label="总数量" value={`${quantityFormatter.format(totalQuantity)} 件`} />
+          <MetricPill label="异常" value={`${lowCount + missingImage} 条`} />
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <div className="min-w-[760px]">
+          <div className="grid grid-cols-[minmax(220px,1.25fr)_150px_96px_120px_170px] bg-[var(--surface-soft)] px-4 py-2 text-xs font-medium text-[var(--muted)]">
+            <span>商品</span>
+            <span>位置</span>
+            <span className="text-right">数量</span>
+            <span>状态</span>
+            <span className="text-right">操作</span>
+          </div>
+          {!isReady ? (
+            <div className="p-4">
+              <SkeletonRows />
+            </div>
+          ) : rows.length ? (
+            rows.map(({ item, slot, section }) => (
+              <InventoryTableRow
+                key={item.id}
+                item={item}
+                slot={slot}
+                section={section}
+                onSelect={() => onSelectRow(slot, section)}
+                onChangeQuantity={onChangeQuantity}
+                onArchive={onArchive}
+                onDelete={onDelete}
+              />
+            ))
+          ) : (
+            <div className="p-4">
+              <EmptySlotState slotCode="库存总表" filterMode={filterMode} onOpenAdd={onOpenAdd} />
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function InventoryTableRow({
+  item,
+  slot,
+  section,
+  onSelect,
+  onChangeQuantity,
+  onArchive,
+  onDelete,
+}: {
+  item: Inventory;
+  slot?: Slot;
+  section?: Section;
+  onSelect: () => void;
+  onChangeQuantity: (inventoryId: string, delta: number) => void;
+  onArchive: (inventoryId: string) => void;
+  onDelete: (inventoryId: string) => void;
+}) {
+  const tone = getStockTone(item.quantity);
+
+  return (
+    <div className="grid grid-cols-[minmax(220px,1.25fr)_150px_96px_120px_170px] items-center border-t border-[var(--border)] px-4 py-3 text-sm">
+      <button className="flex min-w-0 items-center gap-3 text-left" onClick={onSelect}>
+        <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-[var(--surface-soft)] text-xs font-semibold text-[var(--muted)]">
+          {item.product.image ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={item.product.image} alt="" className="h-full w-full object-cover" />
+          ) : (
+            "照片"
+          )}
+        </div>
+        <span className="min-w-0">
+          <span className="block truncate font-semibold">{item.product.name}</span>
+          <span className="mt-1 block truncate text-xs text-[var(--muted)]">{item.product.image ? "已上传图片" : "缺图片"}</span>
+        </span>
+      </button>
+      <button className="text-left font-semibold text-[var(--accent-deep)]" onClick={onSelect}>
+        {section?.code ?? "-"} / {slot?.code ?? "-"}
+      </button>
+      <div className="flex items-center justify-end gap-1">
+        <button
+          className="grid h-8 w-8 place-items-center rounded-full bg-[var(--surface-soft)] text-base disabled:opacity-35"
+          onClick={() => onChangeQuantity(item.id, -1)}
+          disabled={item.quantity <= 0}
+          aria-label="减少"
+        >
+          −
+        </button>
+        <span className="min-w-8 text-center font-semibold">{item.quantity}</span>
+        <button
+          className="grid h-8 w-8 place-items-center rounded-full bg-[var(--accent)] text-base text-white"
+          onClick={() => onChangeQuantity(item.id, 1)}
+          aria-label="增加"
+        >
+          +
+        </button>
+      </div>
+      <StockBadge tone={tone} label={getStockLabel(item.quantity)} />
+      <div className="flex justify-end gap-1">
+        <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={onSelect}>
+          查看
+        </button>
+        <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onArchive(item.id)}>
+          归档
+        </button>
+        <button className="rounded-full px-3 py-1.5 text-xs text-[var(--danger)] hover:bg-[var(--danger-soft)]" onClick={() => onDelete(item.id)}>
+          删除
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LocationOverviewPanel({
   rackName,
   sections,
+  slots,
   selectedSectionId,
+  selectedSlotId,
   totalForSection,
   filledSlotsForSection,
-  onSelect,
+  productsForSlot,
+  totalForSlot,
+  onSelectSection,
+  onSelectSlot,
   onRename,
 }: {
   rackName: string;
   sections: Section[];
+  slots: Slot[];
   selectedSectionId: string;
+  selectedSlotId: string;
   totalForSection: (sectionId: string) => number;
   filledSlotsForSection: (sectionId: string) => number;
-  onSelect: (section: Section) => void;
+  productsForSlot: (slotId: string) => number;
+  totalForSlot: (slotId: string) => number;
+  onSelectSection: (section: Section) => void;
+  onSelectSlot: (slot: Slot) => void;
   onRename: (section: Section) => void;
 }) {
   return (
-    <div>
-      <PanelTitle title={rackName} subtitle="选择一个固定分区" />
+    <section className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)]">
+      <div className="flex items-start justify-between gap-3">
+        <PanelTitle title="位置概览" subtitle={rackName} />
+      </div>
       <div className="mt-4 space-y-3">
-        {sections.map((section) => (
-          <div key={section.id} className="rounded-[14px] border border-[var(--border)] bg-white p-1">
-            <SectionNavItem
-              section={section}
-              active={section.id === selectedSectionId}
-              total={totalForSection(section.id)}
-              filledSlots={filledSlotsForSection(section.id)}
-              onSelect={() => onSelect(section)}
-            />
-            <button
-              className="ml-auto mr-2 block rounded-full px-3 py-1 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]"
-              onClick={() => onRename(section)}
+        {sections.map((section) => {
+          const sectionSlots = slots.filter((slot) => slot.section_id === section.id);
+          return (
+            <div
+              key={section.id}
+              className="rounded-[14px] border border-[var(--border)] bg-[var(--surface)] p-3"
+              style={{ borderColor: selectedSectionId === section.id ? "var(--accent)" : "var(--border)" }}
             >
-              改名
-            </button>
-          </div>
-        ))}
+              <div className="flex items-center justify-between gap-3">
+                <button className="text-left" onClick={() => onSelectSection(section)}>
+                  <p className="text-sm font-semibold">{section.code} {section.name}</p>
+                  <p className="mt-1 text-xs text-[var(--muted)]">
+                    {filledSlotsForSection(section.id)}/5 Slot 有货 · {totalForSection(section.id)} 件
+                  </p>
+                </button>
+                <button className="rounded-full px-3 py-1 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onRename(section)}>
+                  改名
+                </button>
+              </div>
+              <div className="mt-3 grid grid-cols-5 gap-1.5">
+                {sectionSlots.map((slot) => (
+                  <button
+                    key={slot.id}
+                    className="rounded-[10px] border px-2 py-2 text-left text-xs"
+                    style={{
+                      borderColor: selectedSlotId === slot.id ? "var(--accent)" : "var(--border)",
+                      background: selectedSlotId === slot.id ? "var(--accent-soft)" : "#fff",
+                    }}
+                    onClick={() => onSelectSlot(slot)}
+                  >
+                    <span className="block font-semibold">{slot.code}</span>
+                    <span className="mt-1 block text-[11px] text-[var(--muted)]">{productsForSlot(slot.id)} / {totalForSlot(slot.id)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
-    </div>
-  );
-}
-
-function RackFrontPanel({
-  rackName,
-  sections,
-  slots,
-  inventory,
-  selectedSlotId,
-  productsForSlot,
-  totalForSlot,
-  draggingInventoryId,
-  onSelectSlot,
-  onDropInventory,
-}: {
-  rackName: string;
-  sections: Section[];
-  slots: Slot[];
-  inventory: Inventory[];
-  selectedSlotId: string;
-  productsForSlot: (slotId: string) => number;
-  totalForSlot: (slotId: string) => number;
-  draggingInventoryId: string | null;
-  onSelectSlot: (slot: Slot) => void;
-  onDropInventory: (inventoryId: string, targetSlotId: string) => void;
-}) {
-  const total = slots.reduce((sum, slot) => sum + totalForSlot(slot.id), 0);
-  const filled = slots.filter((slot) => productsForSlot(slot.id) > 0).length;
-  const orderedSections = [...sections].sort((left, right) => left.code.localeCompare(right.code));
-
-  return (
-    <div className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)] lg:min-h-[calc(100dvh-150px)]">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <PanelTitle title={rackName} subtitle="正面货架视图，拖动库存到目标 Slot" />
-        <div className="flex gap-2">
-          <MetricPill label="总库存" value={`${total} 件`} />
-          <MetricPill label="占用" value={`${filled}/${slots.length || 25}`} />
-        </div>
-      </div>
-
-      <div className="mt-5 rounded-[18px] border border-[#2f3430] bg-[#2b302d] p-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]">
-        <div className="relative overflow-hidden rounded-[14px] bg-[#1f2421] px-4 py-5">
-          <div className="absolute inset-y-3 left-2 w-4 rounded-[4px] bg-[#3a3f3b] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]" />
-          <div className="absolute inset-y-3 right-2 w-4 rounded-[4px] bg-[#3a3f3b] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]" />
-          <div className="relative z-10 space-y-3 px-3">
-            {orderedSections.map((section) => {
-              const sectionSlots = slots
-                .filter((slot) => slot.section_id === section.id)
-                .sort((left, right) => left.code.localeCompare(right.code));
-
-              return (
-                <div key={section.id} className="relative">
-                  <div className="mb-1 flex items-center justify-between px-1">
-                    <span className="text-xs font-semibold text-white/80">{section.code} {section.name}</span>
-                    <span className="text-[11px] text-white/45">120cm x 40cm</span>
-                  </div>
-                  <div className="grid grid-cols-5 gap-2 border-b-[10px] border-[#343936] bg-[#c7a06e] p-2 shadow-[0_5px_0_rgba(0,0,0,0.26)]">
-                    {sectionSlots.map((slot) => (
-                      <RackSlotDropZone
-                        key={slot.id}
-                        slot={slot}
-                        active={slot.id === selectedSlotId}
-                        products={productsForSlot(slot.id)}
-                        total={totalForSlot(slot.id)}
-                        inventory={inventory.filter((item) => item.slot_id === slot.id)}
-                        draggingInventoryId={draggingInventoryId}
-                        onSelect={() => onSelectSlot(slot)}
-                        onDropInventory={onDropInventory}
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-2 sm:grid-cols-3">
-        <ShelfRule label="尺寸参考" value="180 x 120 x 40cm" />
-        <ShelfRule label="分层" value="A-E 五层" />
-        <ShelfRule label="操作" value="拖库存到 Slot" />
-      </div>
-    </div>
-  );
-}
-
-function RackSlotDropZone({
-  slot,
-  active,
-  products,
-  total,
-  inventory,
-  draggingInventoryId,
-  onSelect,
-  onDropInventory,
-}: {
-  slot: Slot;
-  active: boolean;
-  products: number;
-  total: number;
-  inventory: Inventory[];
-  draggingInventoryId: string | null;
-  onSelect: () => void;
-  onDropInventory: (inventoryId: string, targetSlotId: string) => void;
-}) {
-  const tone = getStockTone(total);
-  const isDropTarget = Boolean(draggingInventoryId);
-
-  return (
-    <button
-      className="group min-h-[104px] rounded-[8px] border bg-[#f6f2ea] p-2 text-left shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)] transition active:scale-[0.98]"
-      style={{
-        borderColor: active ? "var(--accent)" : isDropTarget ? "rgba(25,118,210,0.45)" : "rgba(57,45,30,0.18)",
-        boxShadow: active
-          ? "0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent), inset 0 0 0 1px rgba(255,255,255,0.8)"
-          : "inset 0 0 0 1px rgba(255,255,255,0.7)",
-      }}
-      onClick={onSelect}
-      onDragOver={(event) => {
-        if (!draggingInventoryId) return;
-        event.preventDefault();
-      }}
-      onDrop={(event) => {
-        const inventoryId = event.dataTransfer.getData("text/plain") || draggingInventoryId;
-        if (!inventoryId) return;
-        event.preventDefault();
-        onDropInventory(inventoryId, slot.id);
-      }}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-sm font-bold text-[#2f312e]">{slot.code}</span>
-        <StockDot tone={tone} />
-      </div>
-      <div className="mt-3 flex min-h-10 items-end gap-1">
-        {inventory.slice(0, 3).map((item) => (
-          <span
-            key={item.id}
-            className="block h-8 flex-1 rounded-[5px] border border-black/10 bg-white shadow-sm"
-            title={item.product.name}
-            style={{
-              background: item.product.image ? `url(${item.product.image}) center / cover` : undefined,
-            }}
-          />
-        ))}
-        {!inventory.length ? <span className="text-xs text-black/35">空位</span> : null}
-      </div>
-      <p className="mt-2 truncate text-[11px] text-black/55">{products} 记录 / {total} 件</p>
-    </button>
-  );
-}
-
-function ShelfRule({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[14px] bg-[var(--surface-soft)] px-3 py-3">
-      <p className="text-[11px] text-[var(--muted)]">{label}</p>
-      <p className="mt-1 text-sm font-semibold">{value}</p>
-    </div>
+    </section>
   );
 }
 
@@ -982,8 +1009,6 @@ function InventoryPanel({
   onChangeQuantity,
   onOpenAdd,
   onOpenMove,
-  onDragStart,
-  onDragEnd,
   onArchive,
   onDelete,
 }: {
@@ -996,8 +1021,6 @@ function InventoryPanel({
   onChangeQuantity: (inventoryId: string, delta: number) => void;
   onOpenAdd: () => void;
   onOpenMove: () => void;
-  onDragStart: (inventoryId: string) => void;
-  onDragEnd: () => void;
   onArchive: (inventoryId: string) => void;
   onDelete: (inventoryId: string) => void;
 }) {
@@ -1048,8 +1071,6 @@ function InventoryPanel({
               item={item}
               slotCode={slot?.code ?? "A2"}
               onChangeQuantity={onChangeQuantity}
-              onDragStart={onDragStart}
-              onDragEnd={onDragEnd}
               onArchive={onArchive}
               onDelete={onDelete}
             />
@@ -1070,16 +1091,12 @@ function InventoryRow({
   item,
   slotCode,
   onChangeQuantity,
-  onDragStart,
-  onDragEnd,
   onArchive,
   onDelete,
 }: {
   item: Inventory;
   slotCode: string;
   onChangeQuantity: (inventoryId: string, delta: number) => void;
-  onDragStart: (inventoryId: string) => void;
-  onDragEnd: () => void;
   onArchive: (inventoryId: string) => void;
   onDelete: (inventoryId: string) => void;
 }) {
@@ -1087,16 +1104,7 @@ function InventoryRow({
   const status = getStockLabel(item.quantity);
 
   return (
-    <article
-      className="cursor-grab rounded-[14px] border border-[var(--border)] bg-white p-3 active:cursor-grabbing"
-      draggable
-      onDragStart={(event) => {
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", item.id);
-        onDragStart(item.id);
-      }}
-      onDragEnd={onDragEnd}
-    >
+    <article className="rounded-[14px] border border-[var(--border)] bg-white p-3">
       <div className="flex items-center gap-3">
         <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[12px] bg-[var(--surface-soft)] text-xs font-semibold text-[var(--muted)]">
           {item.product.image ? (
@@ -1468,16 +1476,6 @@ function EmptySlotState({
         添加库存
       </button>
     </div>
-  );
-}
-
-function StockDot({ tone }: { tone: StockTone }) {
-  return (
-    <span
-      className="mt-1 h-2.5 w-2.5 rounded-full"
-      style={{ background: getStockColor(tone) }}
-      aria-hidden="true"
-    />
   );
 }
 
