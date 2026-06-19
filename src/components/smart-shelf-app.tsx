@@ -39,6 +39,7 @@ export function SmartShelfApp() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [createRackOpen, setCreateRackOpen] = useState(false);
+  const [draggingInventoryId, setDraggingInventoryId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!hasSupabaseEnv || !supabase) {
@@ -107,10 +108,6 @@ export function SmartShelfApp() {
     rackSlots.find((slot) => slot.id === selectedSlotId) ??
     rackSlots.find((slot) => slot.section_id === selectedSection?.id) ??
     data.slots[0];
-  const sectionSlots = useMemo(
-    () => rackSlots.filter((slot) => slot.section_id === selectedSection?.id),
-    [rackSlots, selectedSection?.id],
-  );
   const slotInventory = useMemo(
     () => rackInventory.filter((item) => item.slot_id === selectedSlot?.id),
     [rackInventory, selectedSlot?.id],
@@ -186,6 +183,18 @@ export function SmartShelfApp() {
 
   const updateQuantity = async (inventoryId: string, delta: number) => {
     await updateData(() => changeInventoryQuantity(data, inventoryId, delta));
+  };
+
+  const moveInventoryToSlot = async (inventoryId: string, targetSlotId: string) => {
+    const current = data.inventory.find((item) => item.id === inventoryId);
+    try {
+      if (!current || current.slot_id === targetSlotId) return;
+      await updateData(() => moveInventory(data, inventoryId, targetSlotId));
+      setSelectedSlotId(targetSlotId);
+      setViewMode("slot");
+    } finally {
+      setDraggingInventoryId(null);
+    }
   };
 
   const totalForSlot = (slotId: string) =>
@@ -304,8 +313,8 @@ export function SmartShelfApp() {
           </div>
 
           {appMode === "workbench" ? (
-            <div className="grid flex-1 gap-4 px-4 py-4 md:px-6 lg:grid-cols-[minmax(430px,1fr)_420px] lg:gap-6 lg:px-7 lg:py-6">
-              <section className={viewMode === "rack" ? "block" : "hidden lg:block"}>
+            <div className="grid flex-1 gap-4 px-4 py-4 md:px-6 lg:grid-cols-[minmax(560px,1fr)_420px] lg:gap-6 lg:px-7 lg:py-6">
+              <section className={viewMode === "rack" ? "block lg:hidden" : "hidden"}>
                 <MobileSectionList
                   rackName={rack?.name ?? "Rack-1"}
                   sections={rackSections}
@@ -321,13 +330,17 @@ export function SmartShelfApp() {
               </section>
 
               <section className={viewMode === "section" || viewMode === "slot" ? "block" : "hidden lg:block"}>
-                <ShelfMapPanel
-                  section={selectedSection}
-                  slots={sectionSlots}
+                <RackFrontPanel
+                  rackName={rack?.name ?? "Rack-1"}
+                  sections={rackSections}
+                  slots={rackSlots}
+                  inventory={rackInventory}
                   selectedSlotId={selectedSlot?.id ?? selectedSlotId}
                   productsForSlot={productsForSlot}
                   totalForSlot={totalForSlot}
+                  draggingInventoryId={draggingInventoryId}
                   onSelectSlot={selectSlot}
+                  onDropInventory={moveInventoryToSlot}
                 />
               </section>
 
@@ -342,6 +355,8 @@ export function SmartShelfApp() {
                   onChangeQuantity={updateQuantity}
                   onOpenAdd={() => setAddOpen(true)}
                   onOpenMove={() => setMoveOpen(true)}
+                  onDragStart={setDraggingInventoryId}
+                  onDragEnd={() => setDraggingInventoryId(null)}
                   onArchive={(inventoryId) => updateData(() => archiveInventory(data, inventoryId))}
                   onDelete={(inventoryId) => updateData(() => deleteInventory(data, inventoryId))}
                 />
@@ -799,56 +814,152 @@ function MobileSectionList({
   );
 }
 
-function ShelfMapPanel({
-  section,
+function RackFrontPanel({
+  rackName,
+  sections,
   slots,
+  inventory,
   selectedSlotId,
   productsForSlot,
   totalForSlot,
+  draggingInventoryId,
   onSelectSlot,
+  onDropInventory,
 }: {
-  section?: Section;
+  rackName: string;
+  sections: Section[];
   slots: Slot[];
+  inventory: Inventory[];
   selectedSlotId: string;
   productsForSlot: (slotId: string) => number;
   totalForSlot: (slotId: string) => number;
+  draggingInventoryId: string | null;
   onSelectSlot: (slot: Slot) => void;
+  onDropInventory: (inventoryId: string, targetSlotId: string) => void;
 }) {
-  const sectionTotal = slots.reduce((total, slot) => total + totalForSlot(slot.id), 0);
+  const total = slots.reduce((sum, slot) => sum + totalForSlot(slot.id), 0);
   const filled = slots.filter((slot) => productsForSlot(slot.id) > 0).length;
+  const orderedSections = [...sections].sort((left, right) => left.code.localeCompare(right.code));
 
   return (
     <div className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)] lg:min-h-[calc(100dvh-150px)]">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <PanelTitle
-          title={`${section?.code ?? "A"} | ${section?.name ?? "海报区"}`}
-          subtitle="固定 5 个 Slot"
-        />
+        <PanelTitle title={rackName} subtitle="正面货架视图，拖动库存到目标 Slot" />
         <div className="flex gap-2">
-          <MetricPill label="本区库存" value={`${sectionTotal} 件`} />
-          <MetricPill label="占用" value={`${filled}/5`} />
+          <MetricPill label="总库存" value={`${total} 件`} />
+          <MetricPill label="占用" value={`${filled}/${slots.length || 25}`} />
         </div>
       </div>
 
-      <div className="mt-5 grid grid-cols-5 gap-2 lg:grid-cols-1 xl:grid-cols-5">
-        {slots.map((slot) => (
-          <SlotTile
-            key={slot.id}
-            slot={slot}
-            active={slot.id === selectedSlotId}
-            products={productsForSlot(slot.id)}
-            total={totalForSlot(slot.id)}
-            onSelect={() => onSelectSlot(slot)}
-          />
-        ))}
+      <div className="mt-5 rounded-[18px] border border-[#2f3430] bg-[#2b302d] p-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]">
+        <div className="relative overflow-hidden rounded-[14px] bg-[#1f2421] px-4 py-5">
+          <div className="absolute inset-y-3 left-2 w-4 rounded-[4px] bg-[#3a3f3b] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]" />
+          <div className="absolute inset-y-3 right-2 w-4 rounded-[4px] bg-[#3a3f3b] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]" />
+          <div className="relative z-10 space-y-3 px-3">
+            {orderedSections.map((section) => {
+              const sectionSlots = slots
+                .filter((slot) => slot.section_id === section.id)
+                .sort((left, right) => left.code.localeCompare(right.code));
+
+              return (
+                <div key={section.id} className="relative">
+                  <div className="mb-1 flex items-center justify-between px-1">
+                    <span className="text-xs font-semibold text-white/80">{section.code} {section.name}</span>
+                    <span className="text-[11px] text-white/45">120cm x 40cm</span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-2 border-b-[10px] border-[#343936] bg-[#c7a06e] p-2 shadow-[0_5px_0_rgba(0,0,0,0.26)]">
+                    {sectionSlots.map((slot) => (
+                      <RackSlotDropZone
+                        key={slot.id}
+                        slot={slot}
+                        active={slot.id === selectedSlotId}
+                        products={productsForSlot(slot.id)}
+                        total={totalForSlot(slot.id)}
+                        inventory={inventory.filter((item) => item.slot_id === slot.id)}
+                        draggingInventoryId={draggingInventoryId}
+                        onSelect={() => onSelectSlot(slot)}
+                        onDropInventory={onDropInventory}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
-      <div className="mt-5 grid gap-2 sm:grid-cols-3">
-        <ShelfRule label="分区固定" value="A-E" />
-        <ShelfRule label="Slot 固定" value="每区 1-5" />
-        <ShelfRule label="移动对象" value="Inventory" />
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        <ShelfRule label="尺寸参考" value="180 x 120 x 40cm" />
+        <ShelfRule label="分层" value="A-E 五层" />
+        <ShelfRule label="操作" value="拖库存到 Slot" />
       </div>
     </div>
+  );
+}
+
+function RackSlotDropZone({
+  slot,
+  active,
+  products,
+  total,
+  inventory,
+  draggingInventoryId,
+  onSelect,
+  onDropInventory,
+}: {
+  slot: Slot;
+  active: boolean;
+  products: number;
+  total: number;
+  inventory: Inventory[];
+  draggingInventoryId: string | null;
+  onSelect: () => void;
+  onDropInventory: (inventoryId: string, targetSlotId: string) => void;
+}) {
+  const tone = getStockTone(total);
+  const isDropTarget = Boolean(draggingInventoryId);
+
+  return (
+    <button
+      className="group min-h-[104px] rounded-[8px] border bg-[#f6f2ea] p-2 text-left shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)] transition active:scale-[0.98]"
+      style={{
+        borderColor: active ? "var(--accent)" : isDropTarget ? "rgba(25,118,210,0.45)" : "rgba(57,45,30,0.18)",
+        boxShadow: active
+          ? "0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent), inset 0 0 0 1px rgba(255,255,255,0.8)"
+          : "inset 0 0 0 1px rgba(255,255,255,0.7)",
+      }}
+      onClick={onSelect}
+      onDragOver={(event) => {
+        if (!draggingInventoryId) return;
+        event.preventDefault();
+      }}
+      onDrop={(event) => {
+        const inventoryId = event.dataTransfer.getData("text/plain") || draggingInventoryId;
+        if (!inventoryId) return;
+        event.preventDefault();
+        onDropInventory(inventoryId, slot.id);
+      }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-sm font-bold text-[#2f312e]">{slot.code}</span>
+        <StockDot tone={tone} />
+      </div>
+      <div className="mt-3 flex min-h-10 items-end gap-1">
+        {inventory.slice(0, 3).map((item) => (
+          <span
+            key={item.id}
+            className="block h-8 flex-1 rounded-[5px] border border-black/10 bg-white shadow-sm"
+            title={item.product.name}
+            style={{
+              background: item.product.image ? `url(${item.product.image}) center / cover` : undefined,
+            }}
+          />
+        ))}
+        {!inventory.length ? <span className="text-xs text-black/35">空位</span> : null}
+      </div>
+      <p className="mt-2 truncate text-[11px] text-black/55">{products} 记录 / {total} 件</p>
+    </button>
   );
 }
 
@@ -858,42 +969,6 @@ function ShelfRule({ label, value }: { label: string; value: string }) {
       <p className="text-[11px] text-[var(--muted)]">{label}</p>
       <p className="mt-1 text-sm font-semibold">{value}</p>
     </div>
-  );
-}
-
-function SlotTile({
-  slot,
-  active,
-  products,
-  total,
-  onSelect,
-}: {
-  slot: Slot;
-  active: boolean;
-  products: number;
-  total: number;
-  onSelect: () => void;
-}) {
-  const tone = getStockTone(total);
-
-  return (
-    <button
-      className="min-h-[116px] rounded-[14px] border bg-white p-3 text-left transition active:scale-[0.98]"
-      style={{
-        borderColor: active ? "var(--accent)" : "var(--border)",
-        boxShadow: active ? "0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent)" : "none",
-      }}
-      onClick={onSelect}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-base font-semibold">{slot.code}</span>
-        <StockDot tone={tone} />
-      </div>
-      <div className="mt-5">
-        <p className="text-2xl font-semibold leading-none">{total}</p>
-        <p className="mt-2 text-xs text-[var(--muted)]">{products} 个商品记录</p>
-      </div>
-    </button>
   );
 }
 
@@ -907,6 +982,8 @@ function InventoryPanel({
   onChangeQuantity,
   onOpenAdd,
   onOpenMove,
+  onDragStart,
+  onDragEnd,
   onArchive,
   onDelete,
 }: {
@@ -919,6 +996,8 @@ function InventoryPanel({
   onChangeQuantity: (inventoryId: string, delta: number) => void;
   onOpenAdd: () => void;
   onOpenMove: () => void;
+  onDragStart: (inventoryId: string) => void;
+  onDragEnd: () => void;
   onArchive: (inventoryId: string) => void;
   onDelete: (inventoryId: string) => void;
 }) {
@@ -969,6 +1048,8 @@ function InventoryPanel({
               item={item}
               slotCode={slot?.code ?? "A2"}
               onChangeQuantity={onChangeQuantity}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
               onArchive={onArchive}
               onDelete={onDelete}
             />
@@ -989,12 +1070,16 @@ function InventoryRow({
   item,
   slotCode,
   onChangeQuantity,
+  onDragStart,
+  onDragEnd,
   onArchive,
   onDelete,
 }: {
   item: Inventory;
   slotCode: string;
   onChangeQuantity: (inventoryId: string, delta: number) => void;
+  onDragStart: (inventoryId: string) => void;
+  onDragEnd: () => void;
   onArchive: (inventoryId: string) => void;
   onDelete: (inventoryId: string) => void;
 }) {
@@ -1002,7 +1087,16 @@ function InventoryRow({
   const status = getStockLabel(item.quantity);
 
   return (
-    <article className="rounded-[14px] border border-[var(--border)] bg-white p-3">
+    <article
+      className="cursor-grab rounded-[14px] border border-[var(--border)] bg-white p-3 active:cursor-grabbing"
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", item.id);
+        onDragStart(item.id);
+      }}
+      onDragEnd={onDragEnd}
+    >
       <div className="flex items-center gap-3">
         <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[12px] bg-[var(--surface-soft)] text-xs font-semibold text-[var(--muted)]">
           {item.product.image ? (
