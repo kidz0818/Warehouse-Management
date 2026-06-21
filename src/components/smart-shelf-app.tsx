@@ -2055,7 +2055,7 @@ function InventoryDetailDrawer({
   }, [row.item.id, row.item.product.image, row.item.product.name]);
 
   return (
-    <div className="fixed inset-0 z-40 bg-black/20">
+    <div className="fixed inset-0 z-[70] bg-black/20">
       <aside className="ml-auto flex h-full w-full max-w-[min(440px,100vw)] flex-col border-l border-[var(--border)] bg-[var(--background)] shadow-[var(--shadow)]">
         <div className="flex items-center justify-between border-b border-[var(--border)] bg-white px-5 py-4">
           <div>
@@ -2176,8 +2176,8 @@ function Dialog({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-40 grid place-items-end bg-black/20 p-3 lg:place-items-center lg:p-4">
-      <section className="w-full max-w-[calc(100vw-24px)] rounded-[18px] border border-[var(--border)] bg-[var(--background)] p-4 shadow-[var(--shadow)] sm:max-w-md">
+    <div className="fixed inset-0 z-[70] grid place-items-end bg-black/20 p-3 pb-[calc(env(safe-area-inset-bottom)+12px)] lg:place-items-center lg:p-4">
+      <section className="max-h-[calc(100dvh-24px-env(safe-area-inset-bottom))] w-full max-w-[calc(100vw-24px)] overflow-y-auto rounded-[18px] border border-[var(--border)] bg-[var(--background)] p-4 shadow-[var(--shadow)] sm:max-w-md">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">{title}</h2>
           <button className="grid h-9 w-9 place-items-center rounded-full bg-white text-xl" onClick={onClose} aria-label="关闭">
