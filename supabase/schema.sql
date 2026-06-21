@@ -112,20 +112,16 @@ do $$ begin
     where conname = 'products_owner_name_unique'
       and conrelid = 'products'::regclass
   ) then
+    drop index if exists products_owner_name_unique;
     alter table products add constraint products_owner_name_unique unique (owner_id, name);
   end if;
 end $$;
 
-do $$ begin
-  if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'inventory_product_slot_unique'
-      and conrelid = 'inventory'::regclass
-  ) then
-    alter table inventory add constraint inventory_product_slot_unique unique (product_id, slot_id);
-  end if;
-end $$;
+alter table inventory drop constraint if exists inventory_product_slot_unique;
+drop index if exists inventory_product_slot_unique;
+create unique index if not exists inventory_product_slot_active_unique
+on inventory(product_id, slot_id)
+where deleted_at is null and archived_at is null;
 
 create or replace function set_updated_at()
 returns trigger as $$
@@ -372,7 +368,8 @@ begin
 end;
 $$;
 
-create or replace function move_inventory_record(p_inventory_id uuid, p_target_slot_id uuid)
+drop function if exists move_inventory_record(uuid, uuid);
+create or replace function move_inventory_record(p_inventory_id uuid, p_target_slot_id uuid, p_quantity integer default null)
 returns uuid
 language plpgsql
 security invoker
@@ -385,7 +382,9 @@ declare
   v_from_slot_code text;
   v_to_slot_code text;
   v_quantity integer;
+  v_move_quantity integer;
   v_existing_inventory_id uuid;
+  v_result_inventory_id uuid;
 begin
   if v_owner is null then
     raise exception 'Not authenticated';
@@ -398,10 +397,16 @@ begin
   join slots on slots.id = inventory.slot_id
   where inventory.id = p_inventory_id
     and products.owner_id = v_owner
-    and inventory.deleted_at is null;
+    and inventory.deleted_at is null
+    and inventory.archived_at is null;
 
   if not found then
     raise exception 'Inventory record % does not exist', p_inventory_id;
+  end if;
+
+  v_move_quantity := coalesce(p_quantity, v_quantity);
+  if v_move_quantity < 1 or v_move_quantity > v_quantity then
+    raise exception 'Move quantity must be between 1 and current quantity';
   end if;
 
   if not current_user_owns_slot(p_target_slot_id) then
@@ -430,12 +435,18 @@ begin
 
   if v_existing_inventory_id is not null then
     update inventory
-    set quantity = quantity + v_quantity
+    set quantity = quantity + v_move_quantity
     where id = v_existing_inventory_id;
 
-    update inventory
-    set deleted_at = now()
-    where id = p_inventory_id;
+    if v_move_quantity = v_quantity then
+      update inventory
+      set deleted_at = now()
+      where id = p_inventory_id;
+    else
+      update inventory
+      set quantity = quantity - v_move_quantity
+      where id = p_inventory_id;
+    end if;
 
     insert into inventory_movements (
       owner_id,
@@ -459,7 +470,7 @@ begin
       p_target_slot_id,
       v_from_slot_code,
       v_to_slot_code,
-      v_quantity,
+      v_move_quantity,
       'merged',
       'merged into existing inventory'
     );
@@ -467,9 +478,20 @@ begin
     return v_existing_inventory_id;
   end if;
 
-  update inventory
-  set slot_id = p_target_slot_id
-  where id = p_inventory_id;
+  if v_move_quantity = v_quantity then
+    update inventory
+    set slot_id = p_target_slot_id
+    where id = p_inventory_id;
+    v_result_inventory_id := p_inventory_id;
+  else
+    update inventory
+    set quantity = quantity - v_move_quantity
+    where id = p_inventory_id;
+
+    insert into inventory (product_id, slot_id, quantity)
+    values (v_product_id, p_target_slot_id, v_move_quantity)
+    returning id into v_result_inventory_id;
+  end if;
 
   insert into inventory_movements (
     owner_id,
@@ -486,19 +508,19 @@ begin
   )
   values (
     v_owner,
-    p_inventory_id,
+    v_result_inventory_id,
     v_product_id,
     v_product_name,
     v_from_slot_id,
     p_target_slot_id,
     v_from_slot_code,
     v_to_slot_code,
-    v_quantity,
+    v_move_quantity,
     'moved',
     'moved'
   );
 
-  return p_inventory_id;
+  return v_result_inventory_id;
 end;
 $$;
 

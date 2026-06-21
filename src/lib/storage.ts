@@ -153,35 +153,42 @@ export async function loadShelfData(): Promise<ShelfData> {
     const { error: bootstrapError } = await supabase.rpc("ensure_default_shelf");
     if (bootstrapError) throw bootstrapError;
 
-    const [{ data: racks }, { data: sections }, { data: slots }, { data: inventoryRows }, { data: movements }] =
-      await Promise.all([
-        supabase.from("racks").select("id, name").order("created_at"),
-        supabase.from("sections").select("id, rack_id, code, name").order("code"),
-        supabase.from("slots").select("id, section_id, code").order("code"),
-        supabase
-          .from("inventory")
-          .select("id, product_id, slot_id, quantity, archived_at, deleted_at, product:products(id, name, image, archived_at)")
-          .is("deleted_at", null)
-          .is("archived_at", null)
-          .order("created_at"),
-        supabase
-          .from("inventory_movements")
-          .select("id, inventory_id, product_id, product_name, from_slot_id, to_slot_id, from_slot_code, to_slot_code, quantity_snapshot, action, note, created_at")
-          .order("created_at", { ascending: false })
-          .limit(20),
-      ]);
+    const [rackResult, sectionResult, slotResult, inventoryResult, movementResult] = await Promise.all([
+      supabase.from("racks").select("id, name").order("created_at"),
+      supabase.from("sections").select("id, rack_id, code, name").order("code"),
+      supabase.from("slots").select("id, section_id, code").order("code"),
+      supabase
+        .from("inventory")
+        .select("id, product_id, slot_id, quantity, archived_at, deleted_at, product:products(id, name, image, archived_at)")
+        .is("deleted_at", null)
+        .is("archived_at", null)
+        .order("created_at"),
+      supabase
+        .from("inventory_movements")
+        .select("id, inventory_id, product_id, product_name, from_slot_id, to_slot_id, from_slot_code, to_slot_code, quantity_snapshot, action, note, created_at")
+        .order("created_at", { ascending: false })
+        .limit(20),
+    ]);
+
+    const loadError =
+      rackResult.error ??
+      sectionResult.error ??
+      slotResult.error ??
+      inventoryResult.error ??
+      movementResult.error;
+    if (loadError) throw loadError;
 
     return {
-      racks: racks ?? [],
-      sections: (sections ?? []) as ShelfData["sections"],
-      slots: slots ?? [],
+      racks: rackResult.data ?? [],
+      sections: (sectionResult.data ?? []) as ShelfData["sections"],
+      slots: slotResult.data ?? [],
       inventory: activeInventory(
-        ((inventoryRows ?? []) as unknown as Inventory[]).map((item) => ({
+        ((inventoryResult.data ?? []) as unknown as Inventory[]).map((item) => ({
           ...item,
           product: Array.isArray(item.product) ? item.product[0] : item.product,
         })),
       ),
-      movements: (movements ?? []) as InventoryMovement[],
+      movements: (movementResult.data ?? []) as InventoryMovement[],
     };
   }
 
@@ -213,7 +220,8 @@ export async function changeInventoryQuantity(
     const current = data.inventory.find((item) => item.id === inventoryId);
     if (!current) return data;
     const nextQuantity = Math.max(0, current.quantity + delta);
-    await supabase.from("inventory").update({ quantity: nextQuantity }).eq("id", inventoryId);
+    const { error } = await supabase.from("inventory").update({ quantity: nextQuantity }).eq("id", inventoryId);
+    if (error) throw error;
     return loadShelfData();
   }
 
@@ -359,11 +367,13 @@ export async function moveInventory(
   data: ShelfData,
   inventoryId: string,
   targetSlotId: string,
+  quantity?: number,
 ): Promise<ShelfData> {
   if (hasSupabaseEnv && supabase) {
     const { error } = await supabase.rpc("move_inventory_record", {
       p_inventory_id: inventoryId,
       p_target_slot_id: targetSlotId,
+      p_quantity: quantity ?? null,
     });
 
     if (error) throw error;
@@ -372,6 +382,9 @@ export async function moveInventory(
 
   const movingItem = data.inventory.find((item) => item.id === inventoryId);
   if (!movingItem) return data;
+  if (movingItem.quantity <= 0) return data;
+  const moveQuantity = Math.min(movingItem.quantity, Math.max(1, quantity ?? movingItem.quantity));
+  const moveAll = moveQuantity >= movingItem.quantity;
 
   const fromSlot = data.slots.find((slot) => slot.id === movingItem.slot_id);
   const toSlot = data.slots.find((slot) => slot.id === targetSlotId);
@@ -390,30 +403,38 @@ export async function moveInventory(
     to_slot_id: targetSlotId,
     from_slot_code: fromSlot?.code ?? null,
     to_slot_code: toSlot?.code ?? null,
-    quantity_snapshot: movingItem.quantity,
+    quantity_snapshot: moveQuantity,
     action: mergeTarget ? "merged" : "moved",
     note: mergeTarget ? "merged into existing inventory" : "moved",
   });
 
-  const nextData: ShelfData = mergeTarget
-    ? {
-        ...data,
-        inventory: data.inventory
-          .filter((item) => item.id !== inventoryId)
-          .map((item) =>
-            item.id === mergeTarget.id
-              ? { ...item, quantity: item.quantity + movingItem.quantity }
-              : item,
+  const nextInventory = mergeTarget
+    ? data.inventory
+        .filter((item) => !moveAll || item.id !== inventoryId)
+        .map((item) => {
+          if (item.id === mergeTarget.id) return { ...item, quantity: item.quantity + moveQuantity };
+          if (item.id === inventoryId) return { ...item, quantity: item.quantity - moveQuantity };
+          return item;
+        })
+    : moveAll
+      ? data.inventory.map((item) => (item.id === inventoryId ? { ...item, slot_id: targetSlotId } : item))
+      : [
+          ...data.inventory.map((item) =>
+            item.id === inventoryId ? { ...item, quantity: item.quantity - moveQuantity } : item,
           ),
-        movements: [movement, ...(data.movements ?? [])].slice(0, 20),
-      }
-    : {
-        ...data,
-        inventory: data.inventory.map((item) =>
-          item.id === inventoryId ? { ...item, slot_id: targetSlotId } : item,
-        ),
-        movements: [movement, ...(data.movements ?? [])].slice(0, 20),
-      };
+          {
+            ...movingItem,
+            id: newId("inventory"),
+            slot_id: targetSlotId,
+            quantity: moveQuantity,
+          },
+        ];
+
+  const nextData: ShelfData = {
+    ...data,
+    inventory: nextInventory,
+    movements: [movement, ...(data.movements ?? [])].slice(0, 20),
+  };
   await saveLocalShelfData(nextData);
   return nextData;
 }
@@ -649,7 +670,8 @@ export async function renameSection(
   name: string,
 ): Promise<ShelfData> {
   if (hasSupabaseEnv && supabase) {
-    await supabase.from("sections").update({ name }).eq("id", sectionId);
+    const { error } = await supabase.from("sections").update({ name }).eq("id", sectionId);
+    if (error) throw error;
     return loadShelfData();
   }
 

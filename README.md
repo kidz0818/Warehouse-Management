@@ -18,7 +18,7 @@ Rack -> Section -> Slot -> Inventory
 - PWA manifest and service worker
 - Supabase-ready SQL schema and seed data
 - Inventory merge rules and movement history table
-- Supabase Storage image upload with browser-side WebP compression
+- Supabase Storage image upload with browser-side compression and PNG/JPG/WebP fallback
 - Product search, stock filters, archive/delete, and recent operation history
 - Vercel-ready project config
 
@@ -50,7 +50,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
 This project is configured as a private single-person inventory app. Users must sign in with Supabase Auth before reading or writing data. Row-level security uses `auth.uid()` ownership, so anonymous visitors cannot read or mutate your inventory.
 
-On first login, the app calls `ensure_default_shelf()` to create your default `Rack-1`, sections `A-E`, and slots `A1-E5`.
+On first login, the app calls `ensure_default_shelf()` to create your default `Rack-1`, sections `A-E`, and one starter slot in each section. You can add more slots from the admin page.
 
 The schema creates a public Supabase Storage bucket:
 
@@ -58,7 +58,7 @@ The schema creates a public Supabase Storage bucket:
 product-images
 ```
 
-Uploaded images are compressed in the browser to WebP before upload. The bucket only allows `image/webp` and caps files at 5 MB.
+Uploaded images are compressed in the browser before upload. WebP is used when the browser supports it; otherwise the app safely falls back to JPG or the original PNG/JPG/WebP file. The bucket allows `image/webp`, `image/jpeg`, and `image/png`, with a 5 MB cap.
 
 The schema also enforces:
 
@@ -95,10 +95,10 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 ## Product Rules
 
-- Sections are fixed: `A`, `B`, `C`, `D`, `E`.
+- Sections are fixed per rack: `A`, `B`, `C`, `D`, `E`.
 - Section names can be edited.
 - Sections cannot be added or deleted.
-- Each section has exactly five deterministic slots, such as `A1` through `A5`.
+- Slots are user-defined. Each section starts with one slot, and you can add more from the admin page.
 - A slot is only a container.
 - Inventory records live inside slots.
 - Quantity belongs to inventory, not to the product globally.

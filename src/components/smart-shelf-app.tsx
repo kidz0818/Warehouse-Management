@@ -23,6 +23,19 @@ import { seedData } from "@/lib/seed";
 type AppMode = "table" | "gallery" | "admin";
 type StockTone = "empty" | "low" | "watch" | "good";
 type FilterMode = "all" | "inStock" | "lowStock" | "missingImage";
+type ConfirmAction = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  tone?: "danger" | "warning";
+  onConfirm: () => Promise<void>;
+};
+type CsvInventoryRow = {
+  name: string;
+  quantity: number;
+  slotCode: string;
+  image?: string | null;
+};
 type InventoryRowData = {
   item: Inventory;
   slot?: Slot;
@@ -51,6 +64,7 @@ export function SmartShelfApp() {
   const [renameRackOpen, setRenameRackOpen] = useState(false);
   const [createSlotOpen, setCreateSlotOpen] = useState(false);
   const [detailInventoryId, setDetailInventoryId] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -78,26 +92,31 @@ export function SmartShelfApp() {
       return;
     }
 
-    loadShelfData().then((loaded) => {
-      setData(loaded);
-      const loadedRack = loaded.racks[0];
-      if (loadedRack) setSelectedRackId(loadedRack.id);
-      const loadedSections = loadedRack
-        ? loaded.sections.filter((section) => section.rack_id === loadedRack.id)
-        : loaded.sections;
-      const loadedSlots = loaded.slots.filter((slot) =>
-        loadedSections.some((section) => section.id === slot.section_id),
-      );
-      const firstSection = loadedSections.find((section) => section.code === "A") ?? loadedSections[0];
-      const preferredSlot =
-        loadedSlots.find((slot) => slot.code === "A2" && slot.section_id === firstSection?.id) ??
-        loadedSlots.find((slot) => slot.section_id === firstSection?.id) ??
-        loadedSlots[0];
+    loadShelfData()
+      .then((loaded) => {
+        setData(loaded);
+        const loadedRack = loaded.racks[0];
+        if (loadedRack) setSelectedRackId(loadedRack.id);
+        const loadedSections = loadedRack
+          ? loaded.sections.filter((section) => section.rack_id === loadedRack.id)
+          : loaded.sections;
+        const loadedSlots = loaded.slots.filter((slot) =>
+          loadedSections.some((section) => section.id === slot.section_id),
+        );
+        const firstSection = loadedSections.find((section) => section.code === "A") ?? loadedSections[0];
+        const preferredSlot =
+          loadedSlots.find((slot) => slot.code === "A2" && slot.section_id === firstSection?.id) ??
+          loadedSlots.find((slot) => slot.section_id === firstSection?.id) ??
+          loadedSlots[0];
 
-      if (firstSection) setSelectedSectionId(firstSection.id);
-      if (preferredSlot) setSelectedSlotId(preferredSlot.id);
-      setIsReady(true);
-    });
+        if (firstSection) setSelectedSectionId(firstSection.id);
+        if (preferredSlot) setSelectedSlotId(preferredSlot.id);
+        setActionError(null);
+      })
+      .catch((error) => {
+        setActionError(getErrorMessage(error));
+      })
+      .finally(() => setIsReady(true));
   }, [user]);
 
   const rack = data.racks.find((entry) => entry.id === selectedRackId) ?? data.racks[0];
@@ -206,14 +225,63 @@ export function SmartShelfApp() {
   };
 
   const updateQuantity = async (inventoryId: string, delta: number) => {
+    if (isSaving) return;
     await updateData(() => changeInventoryQuantity(data, inventoryId, delta));
   };
 
-  const moveInventoryToSlot = async (inventoryId: string, targetSlotId: string) => {
+  const confirmArchiveInventory = (inventoryId: string) => {
+    if (isSaving) return;
+    const item = data.inventory.find((entry) => entry.id === inventoryId);
+    setConfirmAction({
+      title: "归档这条库存？",
+      message: `${item?.product.name ?? "这条库存"} 会从当前列表隐藏，但操作历史会保留。`,
+      confirmLabel: "归档",
+      tone: "warning",
+      onConfirm: () => updateData(() => archiveInventory(data, inventoryId)),
+    });
+  };
+
+  const confirmDeleteInventory = (inventoryId: string) => {
+    if (isSaving) return;
+    const item = data.inventory.find((entry) => entry.id === inventoryId);
+    setConfirmAction({
+      title: "删除这条库存？",
+      message: `${item?.product.name ?? "这条库存"} 会被隐藏并记录到操作历史，页面内不会直接恢复。`,
+      confirmLabel: "删除",
+      tone: "danger",
+      onConfirm: () => updateData(() => deleteInventory(data, inventoryId)),
+    });
+  };
+
+  const moveInventoryToSlot = async (inventoryId: string, targetSlotId: string, quantity?: number) => {
+    if (isSaving) return;
     const current = data.inventory.find((item) => item.id === inventoryId);
     if (!current || current.slot_id === targetSlotId) return;
-    await updateData(() => moveInventory(data, inventoryId, targetSlotId));
+    await updateData(() => moveInventory(data, inventoryId, targetSlotId, quantity));
     setSelectedSlotId(targetSlotId);
+  };
+
+  const importInventoryCsv = async (file: File) => {
+    if (isSaving) return;
+    const text = await file.text();
+    const rows = parseInventoryCsv(text);
+
+    await updateData(async () => {
+      let nextData = data;
+      for (const row of rows) {
+        const slot = rackSlots.find((entry) => entry.code.trim().toLowerCase() === row.slotCode.toLowerCase());
+        if (!slot) {
+          throw new Error(`找不到 Slot：${row.slotCode}。请先在当前 Rack 新增这个 Slot，再导入。`);
+        }
+        nextData = await addInventory(nextData, {
+          name: row.name,
+          quantity: row.quantity,
+          image: row.image ?? null,
+          slotId: slot.id,
+        });
+      }
+      return nextData;
+    });
   };
 
   const totalForSlot = (slotId: string) =>
@@ -286,8 +354,8 @@ export function SmartShelfApp() {
                   onChangeQuantity={updateQuantity}
                   onMoveInventory={moveInventoryToSlot}
                   onOpenAdd={() => setAddOpen(true)}
-                  onArchive={(inventoryId) => updateData(() => archiveInventory(data, inventoryId))}
-                  onDelete={(inventoryId) => updateData(() => deleteInventory(data, inventoryId))}
+                  onArchive={confirmArchiveInventory}
+                  onDelete={confirmDeleteInventory}
                 />
               </section>
 
@@ -319,8 +387,8 @@ export function SmartShelfApp() {
                   onChangeQuantity={updateQuantity}
                   onOpenAdd={() => setAddOpen(true)}
                   onOpenMove={() => setMoveOpen(true)}
-                  onArchive={(inventoryId) => updateData(() => archiveInventory(data, inventoryId))}
-                  onDelete={(inventoryId) => updateData(() => deleteInventory(data, inventoryId))}
+                  onArchive={confirmArchiveInventory}
+                  onDelete={confirmDeleteInventory}
                 />
                 <MovementPanel movements={data.movements ?? []} />
                 {hasSupabaseEnv ? <SignOutPanel /> : null}
@@ -339,16 +407,38 @@ export function SmartShelfApp() {
               activeSlots={rackSlots}
               activeInventory={rackInventory}
               movements={data.movements ?? []}
+              isSaving={isSaving}
               onCreateRack={() => setCreateRackOpen(true)}
               onRenameRack={() => setRenameRackOpen(true)}
               onCreateSlot={() => setCreateSlotOpen(true)}
-              onDeleteSlot={(slotId) => updateData(() => deleteSlot(data, slotId))}
-              onDeleteRack={(rackId) => updateData(() => deleteRack(data, rackId))}
+              onImportCsv={importInventoryCsv}
+              onDeleteSlot={(slotId) => {
+                const slot = data.slots.find((entry) => entry.id === slotId);
+                setConfirmAction({
+                  title: "删除空 Slot？",
+                  message: `${slot?.code ?? "这个 Slot"} 删除后不会影响已有库存。`,
+                  confirmLabel: "删除 Slot",
+                  tone: "danger",
+                  onConfirm: () => updateData(() => deleteSlot(data, slotId)),
+                });
+              }}
+              onDeleteRack={(rackId) => {
+                const rackToDelete = data.racks.find((entry) => entry.id === rackId);
+                setConfirmAction({
+                  title: "删除 Rack？",
+                  message: `${rackToDelete?.name ?? "这个 Rack"} 和里面的 Slot/库存记录会一起删除，页面内不能直接恢复。`,
+                  confirmLabel: "删除 Rack",
+                  tone: "danger",
+                  onConfirm: () => updateData(() => deleteRack(data, rackId)),
+                });
+              }}
               onSelectWorkbench={() => setAppMode("table")}
             />
           )}
         </section>
       </div>
+
+      {actionError ? <ActionErrorToast message={actionError} onDismiss={() => setActionError(null)} /> : null}
 
       <BottomNavigation
         appMode={appMode}
@@ -385,9 +475,10 @@ export function SmartShelfApp() {
           inventory={slotInventory}
           slots={rackSlots}
           currentSlot={selectedSlot}
+          isSaving={isSaving}
           onClose={() => setMoveOpen(false)}
-          onMove={async (inventoryId, targetSlotId) => {
-            await updateData(() => moveInventory(data, inventoryId, targetSlotId));
+          onMove={async (inventoryId, targetSlotId, quantity) => {
+            await updateData(() => moveInventory(data, inventoryId, targetSlotId, quantity));
             setMoveOpen(false);
           }}
         />
@@ -456,13 +547,45 @@ export function SmartShelfApp() {
             await updateData(() => updateProductDetails(data, detailRow.item.product_id, input));
           }}
           onChangeQuantity={(delta) => updateQuantity(detailRow.item.id, delta)}
-          onArchive={async () => {
-            await updateData(() => archiveInventory(data, detailRow.item.id));
-            setDetailInventoryId(null);
+          onArchive={() => {
+            setConfirmAction({
+              title: "归档这条库存？",
+              message: `${detailRow.item.product.name} 会从当前列表隐藏，但操作历史会保留。`,
+              confirmLabel: "归档",
+              tone: "warning",
+              onConfirm: async () => {
+                await updateData(() => archiveInventory(data, detailRow.item.id));
+                setDetailInventoryId(null);
+              },
+            });
           }}
-          onDelete={async () => {
-            await updateData(() => deleteInventory(data, detailRow.item.id));
-            setDetailInventoryId(null);
+          onDelete={() => {
+            setConfirmAction({
+              title: "删除这条库存？",
+              message: `${detailRow.item.product.name} 会被隐藏并记录到操作历史，页面内不会直接恢复。`,
+              confirmLabel: "删除",
+              tone: "danger",
+              onConfirm: async () => {
+                await updateData(() => deleteInventory(data, detailRow.item.id));
+                setDetailInventoryId(null);
+              },
+            });
+          }}
+        />
+      ) : null}
+
+      {confirmAction ? (
+        <ConfirmDialog
+          action={confirmAction}
+          isSaving={isSaving}
+          onClose={() => setConfirmAction(null)}
+          onConfirm={async () => {
+            try {
+              await confirmAction.onConfirm();
+              setConfirmAction(null);
+            } catch {
+              // updateData renders the error toast.
+            }
           }}
         />
       ) : null}
@@ -679,6 +802,19 @@ function BottomNavigation({
         </div>
       </div>
     </nav>
+  );
+}
+
+function ActionErrorToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+86px)] z-[90] px-3">
+      <div className="pointer-events-auto mx-auto flex max-w-md items-start justify-between gap-3 rounded-[16px] border border-[var(--danger)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)] shadow-[var(--shadow)]">
+        <p className="min-w-0 leading-5">{message}</p>
+        <button className="shrink-0 rounded-full px-2 font-semibold" onClick={onDismiss} aria-label="关闭错误提示">
+          ×
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -917,12 +1053,7 @@ function InventoryTableRow({
     <div className="grid grid-cols-[minmax(220px,1.25fr)_120px_96px_120px_150px_170px] items-center border-t border-[var(--border)] px-4 py-3 text-sm">
       <button className="flex min-w-0 items-center gap-3 text-left" onClick={() => onOpenDetail(item.id)}>
         <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-[var(--surface-soft)] text-xs font-semibold text-[var(--muted)]">
-          {item.product.image ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={item.product.image} alt="" className="h-full w-full object-cover" />
-          ) : (
-            "照片"
-          )}
+          <ProductImage src={item.product.image} />
         </div>
         <span className="min-w-0">
           <span className="block truncate font-semibold">{item.product.name}</span>
@@ -1008,8 +1139,7 @@ function InventoryMobileCard({
           onClick={() => onOpenDetail(item.id)}
         >
           {item.product.image ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={item.product.image} alt="" className="h-full w-full object-cover" />
+            <ProductImage src={item.product.image} />
           ) : (
             "照片"
           )}
@@ -1173,8 +1303,7 @@ function ProductGalleryPage({
             >
               <div className="grid aspect-[4/3] place-items-center bg-[var(--surface-soft)] text-sm font-semibold text-[var(--muted)]">
                 {item.product.image ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={item.product.image} alt="" className="h-full w-full object-cover" />
+                  <ProductImage src={item.product.image} emptyLabel="暂无图片" />
                 ) : (
                   "暂无图片"
                 )}
@@ -1309,8 +1438,7 @@ function InventoryRow({
       <div className="flex items-center gap-3">
         <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[12px] bg-[var(--surface-soft)] text-xs font-semibold text-[var(--muted)]">
           {item.product.image ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={item.product.image} alt="" className="h-full w-full object-cover" />
+            <ProductImage src={item.product.image} />
           ) : (
             "照片"
           )}
@@ -1321,7 +1449,7 @@ function InventoryRow({
             <StockBadge tone={tone} label={status} />
           </div>
           <p className="mt-1 truncate text-xs text-[var(--muted)]">
-            {slotCode} · {item.product.image ? "WebP 图片" : "待补图片"} · 库存记录
+            {slotCode} · {item.product.image ? "已上传图片" : "待补图片"} · 库存记录
           </p>
         </div>
       </div>
@@ -1402,9 +1530,11 @@ function AdminPanel({
   activeSlots,
   activeInventory,
   movements,
+  isSaving,
   onCreateRack,
   onRenameRack,
   onCreateSlot,
+  onImportCsv,
   onDeleteSlot,
   onDeleteRack,
   onSelectWorkbench,
@@ -1415,9 +1545,11 @@ function AdminPanel({
   activeSlots: Slot[];
   activeInventory: Inventory[];
   movements: InventoryMovement[];
+  isSaving: boolean;
   onCreateRack: () => void;
   onRenameRack: () => void;
   onCreateSlot: () => void;
+  onImportCsv: (file: File) => void;
   onDeleteSlot: (slotId: string) => void;
   onDeleteRack: (rackId: string) => void;
   onSelectWorkbench: () => void;
@@ -1425,6 +1557,21 @@ function AdminPanel({
   const productIds = new Set(activeInventory.map((item) => item.product_id));
   const lowStock = activeInventory.filter((item) => item.quantity > 0 && item.quantity <= 2);
   const missingImage = activeInventory.filter((item) => !item.product.image);
+  const emptySlots = activeSlots.filter((slot) => !activeInventory.some((item) => item.slot_id === slot.id));
+  const zeroQuantity = activeInventory.filter((item) => item.quantity === 0);
+  const orphanInventory = activeInventory.filter((item) => !activeSlots.some((slot) => slot.id === item.slot_id));
+  const activeKeys = new Map<string, number>();
+  activeInventory.forEach((item) => {
+    const key = `${item.product_id}:${item.slot_id}`;
+    activeKeys.set(key, (activeKeys.get(key) ?? 0) + 1);
+  });
+  const duplicateActive = [...activeKeys.values()].filter((count) => count > 1).length;
+  const healthItems = [
+    { label: "空 Slot", value: emptySlots.length, tone: emptySlots.length > 12 ? "warning" : "normal" },
+    { label: "0 库存", value: zeroQuantity.length, tone: zeroQuantity.length ? "warning" : "normal" },
+    { label: "重复活跃记录", value: duplicateActive, tone: duplicateActive ? "danger" : "normal" },
+    { label: "位置异常", value: orphanInventory.length, tone: orphanInventory.length ? "danger" : "normal" },
+  ] as const;
   const totalQuantity = activeInventory.reduce((total, item) => total + item.quantity, 0);
   const rackDiagnostics = data.racks.map((rack) => {
     const sections = data.sections.filter((section) => section.rack_id === rack.id);
@@ -1464,6 +1611,32 @@ function AdminPanel({
           <AdminMetric label="缺图片" value={`${missingImage.length}`} detail="需要补图的商品" tone={missingImage.length ? "danger" : "normal"} />
         </div>
 
+        <section className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)]">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold">数据健康</h2>
+            <span className="text-xs text-[var(--muted)]">当前 Rack</span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-4">
+            {healthItems.map((item) => (
+              <div
+                key={item.label}
+                className="rounded-[14px] border border-[var(--border)] px-3 py-3"
+                style={{
+                  background:
+                    item.tone === "danger"
+                      ? "var(--danger-soft)"
+                      : item.tone === "warning"
+                        ? "var(--warning-soft)"
+                        : "var(--surface-soft)",
+                }}
+              >
+                <p className="text-xs text-[var(--muted)]">{item.label}</p>
+                <p className="mt-1 text-lg font-semibold">{item.value}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
         <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
           <section className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)]">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1498,7 +1671,7 @@ function AdminPanel({
                 <span className="text-right">库存</span>
                 <span className="text-right">操作</span>
               </div>
-              {rackDiagnostics.map(({ rack, sections, slots, quantity, inventory }) => (
+              {rackDiagnostics.map(({ rack, sections, slots, quantity }) => (
                 <div
                   key={rack.id}
                   className="grid grid-cols-[1fr_70px_70px_86px_78px] items-center border-t border-[var(--border)] px-3 py-3 text-sm"
@@ -1514,12 +1687,7 @@ function AdminPanel({
                     <button
                       className="rounded-full px-3 py-1.5 text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)] disabled:cursor-not-allowed disabled:opacity-35"
                       disabled={data.racks.length <= 1}
-                      onClick={() => {
-                        const confirmed = window.confirm(
-                          `删除 ${rack.name}？这会删除 ${inventory.length} 条库存记录，不能在页面内恢复。`,
-                        );
-                        if (confirmed) onDeleteRack(rack.id);
-                      }}
+                      onClick={() => onDeleteRack(rack.id)}
                     >
                       删除
                     </button>
@@ -1590,6 +1758,29 @@ function AdminPanel({
             }))}
           />
         </div>
+
+        <section className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)]">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold">批量导入</h2>
+              <p className="mt-1 text-sm text-[var(--muted)]">CSV 字段：product、quantity、slot、image</p>
+            </div>
+            <label className="rounded-[14px] bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white">
+              {isSaving ? "导入中" : "选择 CSV"}
+              <input
+                className="sr-only"
+                type="file"
+                accept=".csv,text/csv"
+                disabled={isSaving}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) onImportCsv(file);
+                }}
+              />
+            </label>
+          </div>
+        </section>
 
         <section className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)]">
           <div className="flex items-center justify-between">
@@ -1728,6 +1919,23 @@ function SkeletonRows() {
   );
 }
 
+function ProductImage({ src, emptyLabel = "照片" }: { src?: string | null; emptyLabel?: string }) {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
+  if (src && !failed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={src} alt="" className="h-full w-full object-cover" onError={() => setFailed(true)} />
+    );
+  }
+
+  return <span className="px-2 text-center">{src ? "图片失效" : emptyLabel}</span>;
+}
+
 function AddInventoryDialog({
   slot,
   isSaving,
@@ -1759,7 +1967,7 @@ function AddInventoryDialog({
       <input
         className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 outline-none focus:border-[var(--accent)]"
         type="number"
-        min="0"
+        min="1"
         value={quantity}
         onChange={(event) => setQuantity(Number(event.target.value))}
       />
@@ -1771,7 +1979,7 @@ function AddInventoryDialog({
         capture="environment"
         onChange={(event) => setImageFile(event.target.files?.[0] ?? null)}
       />
-      <p className="mt-2 text-xs text-[var(--muted)]">会在浏览器内压缩成 WebP 再上传。</p>
+      <p className="mt-2 text-xs text-[var(--muted)]">会在浏览器内自动压缩；手机不支持的格式会安全降级上传。</p>
       <label className="mt-4 block text-sm font-medium">图片 URL</label>
       <input
         className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 outline-none focus:border-[var(--accent)]"
@@ -1786,11 +1994,11 @@ function AddInventoryDialog({
       ) : null}
       <button
         className="mt-5 w-full rounded-[14px] bg-[var(--accent)] px-4 py-3 font-semibold text-white disabled:opacity-40"
-        disabled={!name.trim() || isSaving}
+        disabled={!name.trim() || quantity < 1 || isSaving}
         onClick={() =>
           onSave({
             name: name.trim(),
-            quantity: Math.max(0, quantity),
+            quantity: Math.max(1, quantity),
             image: image.trim() || null,
             imageFile,
             slotId: slot.id,
@@ -1807,17 +2015,25 @@ function MoveInventoryDialog({
   inventory,
   slots,
   currentSlot,
+  isSaving,
   onClose,
   onMove,
 }: {
   inventory: Inventory[];
   slots: Slot[];
   currentSlot: Slot;
+  isSaving: boolean;
   onClose: () => void;
-  onMove: (inventoryId: string, targetSlotId: string) => void;
+  onMove: (inventoryId: string, targetSlotId: string, quantity: number) => void;
 }) {
   const [inventoryId, setInventoryId] = useState(inventory[0]?.id ?? "");
   const [targetSlotId, setTargetSlotId] = useState(slots.find((slot) => slot.id !== currentSlot.id)?.id ?? "");
+  const selectedInventory = inventory.find((item) => item.id === inventoryId);
+  const [quantity, setQuantity] = useState(selectedInventory?.quantity ?? 1);
+
+  useEffect(() => {
+    setQuantity(selectedInventory?.quantity ?? 1);
+  }, [selectedInventory?.id, selectedInventory?.quantity]);
 
   return (
     <Dialog title="移动库存" onClose={onClose}>
@@ -1838,6 +2054,15 @@ function MoveInventoryDialog({
               </option>
             ))}
           </select>
+          <label className="mt-4 block text-sm font-medium">移动数量</label>
+          <input
+            className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 outline-none focus:border-[var(--accent)]"
+            type="number"
+            min="1"
+            max={selectedInventory?.quantity ?? 1}
+            value={quantity}
+            onChange={(event) => setQuantity(Number(event.target.value))}
+          />
           <label className="mt-4 block text-sm font-medium">目标 Slot</label>
           <select
             className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 outline-none focus:border-[var(--accent)]"
@@ -1854,10 +2079,10 @@ function MoveInventoryDialog({
           </select>
           <button
             className="mt-5 w-full rounded-[14px] bg-[var(--accent)] px-4 py-3 font-semibold text-white disabled:opacity-40"
-            disabled={!inventoryId || !targetSlotId}
-            onClick={() => onMove(inventoryId, targetSlotId)}
+            disabled={isSaving || !inventoryId || !targetSlotId || quantity < 1 || quantity > (selectedInventory?.quantity ?? 0)}
+            onClick={() => onMove(inventoryId, targetSlotId, quantity)}
           >
-            移动库存
+            {isSaving ? "移动中" : "移动库存"}
           </button>
         </>
       ) : (
@@ -2071,8 +2296,7 @@ function InventoryDetailDrawer({
           <div className="overflow-hidden rounded-[18px] border border-[var(--border)] bg-white">
             <div className="grid aspect-[4/3] place-items-center bg-[var(--surface-soft)] text-sm font-semibold text-[var(--muted)]">
               {row.item.product.image ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={row.item.product.image} alt="" className="h-full w-full object-cover" />
+                <ProductImage src={row.item.product.image} emptyLabel="暂无图片" />
               ) : (
                 "暂无图片"
               )}
@@ -2190,6 +2414,43 @@ function Dialog({
   );
 }
 
+function ConfirmDialog({
+  action,
+  isSaving,
+  onClose,
+  onConfirm,
+}: {
+  action: ConfirmAction;
+  isSaving: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const danger = action.tone === "danger";
+
+  return (
+    <Dialog title={action.title} onClose={onClose}>
+      <p className="text-sm leading-6 text-[var(--muted)]">{action.message}</p>
+      <div className="mt-5 grid grid-cols-2 gap-2">
+        <button
+          className="rounded-[14px] bg-white px-4 py-3 text-sm font-semibold text-[var(--muted)]"
+          onClick={onClose}
+          disabled={isSaving}
+        >
+          取消
+        </button>
+        <button
+          className="rounded-[14px] px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"
+          style={{ background: danger ? "var(--danger)" : "var(--accent)" }}
+          onClick={onConfirm}
+          disabled={isSaving}
+        >
+          {isSaving ? "处理中" : action.confirmLabel}
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
 function matchesFilter(item: Inventory, filterMode: FilterMode) {
   if (filterMode === "inStock") return item.quantity > 0;
   if (filterMode === "lowStock") return item.quantity > 0 && item.quantity <= 2;
@@ -2249,8 +2510,110 @@ function formatTime(value: string) {
   }).format(new Date(value));
 }
 
+function parseInventoryCsv(text: string): CsvInventoryRow[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    throw new Error("CSV 至少需要表头和一行库存。");
+  }
+
+  const headers = parseCsvLine(lines[0]).map((header) => header.trim().toLowerCase());
+  const getIndex = (...names: string[]) => names.map((name) => headers.indexOf(name)).find((index) => index >= 0) ?? -1;
+  const nameIndex = getIndex("product", "product_name", "name", "商品", "商品名称");
+  const quantityIndex = getIndex("quantity", "qty", "数量");
+  const slotIndex = getIndex("slot", "slot_code", "location", "位置");
+  const imageIndex = getIndex("image", "image_url", "图片", "图片url");
+
+  if (nameIndex < 0 || quantityIndex < 0 || slotIndex < 0) {
+    throw new Error("CSV 缺少必要字段：product、quantity、slot。");
+  }
+
+  return lines.slice(1).map((line, index) => {
+    const values = parseCsvLine(line);
+    const name = values[nameIndex]?.trim();
+    const quantity = Number(values[quantityIndex]);
+    const slotCode = values[slotIndex]?.trim();
+    const image = imageIndex >= 0 ? values[imageIndex]?.trim() : "";
+
+    if (!name) throw new Error(`CSV 第 ${index + 2} 行缺少商品名称。`);
+    if (!Number.isFinite(quantity) || quantity < 1) throw new Error(`CSV 第 ${index + 2} 行数量必须大于 0。`);
+    if (!slotCode) throw new Error(`CSV 第 ${index + 2} 行缺少 Slot。`);
+
+    return {
+      name,
+      quantity: Math.floor(quantity),
+      slotCode,
+      image: image || null,
+    };
+  });
+}
+
+function parseCsvLine(line: string) {
+  const values: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+
+    if (char === "\"" && inQuotes && next === "\"") {
+      current += "\"";
+      index += 1;
+    } else if (char === "\"") {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      values.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+
+  values.push(current);
+  return values;
+}
+
 function getErrorMessage(error: unknown) {
-  if (error instanceof Error && error.message) return error.message;
+  const rawMessage =
+    error instanceof Error && error.message
+      ? error.message
+      : typeof error === "object" && error && "message" in error
+        ? String((error as { message?: unknown }).message)
+        : "";
+
+  const message = rawMessage.trim();
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("mime type")) {
+    return "图片格式被 Supabase 拒绝了。请先运行最新的 schema.sql，或把 product-images bucket 允许 PNG/JPG/WebP。";
+  }
+
+  if (normalized.includes("row-level security") || normalized.includes("violates row-level security")) {
+    return "没有写入权限。请确认已经登录，并且 Supabase 已经运行最新的 schema.sql。";
+  }
+
+  if (normalized.includes("jwt") || normalized.includes("auth session missing") || normalized.includes("please sign in")) {
+    return "登录状态已失效，请重新登录后再操作。";
+  }
+
+  if (normalized.includes("failed to fetch") || normalized.includes("network")) {
+    return "连接 Supabase 失败，请检查网络或稍后再试。";
+  }
+
+  if (normalized.includes("duplicate key")) {
+    return "这条记录已经存在，请刷新后再试一次。";
+  }
+
+  if (normalized.includes("only png") || normalized.includes("failed to read image")) {
+    return "图片读取失败，请换一张 PNG、JPG 或 WebP 图片。";
+  }
+
+  if (message) return message;
+
   if (typeof error === "object" && error && "message" in error) {
     return String((error as { message?: unknown }).message);
   }
