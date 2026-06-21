@@ -5,6 +5,7 @@ import {
   addInventory,
   archiveInventory,
   changeInventoryQuantity,
+  compressImageForUpload,
   createRack,
   createSlot,
   deleteInventory,
@@ -452,13 +453,8 @@ export function SmartShelfApp() {
             setAddOpen(false);
           }}
           onSave={async (input) => {
-            try {
-              const targetSlot = rackSlots.find((entry) => entry.id === input.slotId);
-              await updateData(() => addInventory(data, input), `已添加到 ${targetSlot?.code ?? "Slot"}`);
-              setAddOpen(false);
-            } catch {
-              // The dialog renders the error message from updateData.
-            }
+            const targetSlot = rackSlots.find((entry) => entry.id === input.slotId);
+            await updateData(() => addInventory(data, input), `已添加到 ${targetSlot?.code ?? "Slot"}`);
           }}
         />
       ) : null}
@@ -1796,12 +1792,54 @@ function AddInventoryDialog({
 }) {
   const [step, setStep] = useState<"product" | "slot">("product");
   const [name, setName] = useState("");
-  const [quantity, setQuantity] = useState(1);
+  const [quantity, setQuantity] = useState("1");
   const [image, setImage] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageCompression, setImageCompression] = useState<string | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [slotId, setSlotId] = useState(slot.id);
   const selectedSlot = slots.find((entry) => entry.id === slotId) ?? slot;
-  const canContinue = name.trim() && quantity >= 1;
+  const quantityValue = Number(quantity);
+  const canContinue = name.trim() && Number.isFinite(quantityValue) && quantityValue >= 1;
+
+  const resetForNextItem = () => {
+    setStep("product");
+    setName("");
+    setQuantity("1");
+    setImage("");
+    setImageFile(null);
+    setImageCompression(null);
+    setFileInputKey((key) => key + 1);
+  };
+
+  const handleImageFileChange = async (file: File | null) => {
+    setImageFile(file);
+    setImageCompression(null);
+    if (!file) return;
+
+    setImageCompression("正在压缩...");
+    try {
+      const compressed = await compressImageForUpload(file);
+      setImageCompression(`已压缩为 ${formatUploadType(compressed.contentType)} · ${formatBytes(compressed.blob.size)}`);
+    } catch {
+      setImageCompression("这张图片无法在浏览器内压缩，请换 JPG、PNG 或 WebP。");
+    }
+  };
+
+  const saveAndContinue = async () => {
+    try {
+      await onSave({
+        name: name.trim(),
+        quantity: Math.max(1, Math.floor(quantityValue)),
+        image: image.trim() || null,
+        imageFile,
+        slotId: selectedSlot.id,
+      });
+      resetForNextItem();
+    } catch {
+      // The dialog renders the error message from updateData.
+    }
+  };
 
   return (
     <Dialog title={step === "product" ? "添加库存" : "选择位置"} onClose={onClose}>
@@ -1844,16 +1882,18 @@ function AddInventoryDialog({
             type="number"
             min="1"
             value={quantity}
-            onChange={(event) => setQuantity(Number(event.target.value))}
+            onChange={(event) => setQuantity(event.target.value)}
           />
           <label className="mt-4 block text-sm font-medium">上传图片</label>
           <input
             className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 text-sm outline-none file:mr-3 file:rounded-full file:border-0 file:bg-[var(--surface-soft)] file:px-3 file:py-1.5 file:text-sm"
+            key={fileInputKey}
             type="file"
             accept="image/*"
             capture="environment"
-            onChange={(event) => setImageFile(event.target.files?.[0] ?? null)}
+            onChange={(event) => handleImageFileChange(event.target.files?.[0] ?? null)}
           />
+          {imageCompression ? <p className="mt-2 text-xs text-[var(--muted)]">{imageCompression}</p> : null}
           <details className="mt-4 rounded-[14px] bg-[var(--surface-soft)] px-3 py-2">
             <summary className="text-sm font-medium text-[var(--muted)]">高级：图片 URL</summary>
             <input
@@ -1892,16 +1932,10 @@ function AddInventoryDialog({
             setStep("slot");
             return;
           }
-          onSave({
-            name: name.trim(),
-            quantity: Math.max(1, quantity),
-            image: image.trim() || null,
-            imageFile,
-            slotId: selectedSlot.id,
-          });
+          saveAndContinue();
         }}
       >
-        {isSaving ? "保存中" : step === "product" ? `下一步：${selectedSlot.code}` : `添加到 ${selectedSlot.code}`}
+        {isSaving ? "保存中" : step === "product" ? `下一步：${selectedSlot.code}` : `添加到 ${selectedSlot.code}，继续添加`}
       </button>
     </Dialog>
   );
@@ -1929,10 +1963,11 @@ function MoveInventoryDialog({
   const [inventoryId, setInventoryId] = useState(inventory[0]?.id ?? "");
   const [targetSlotId, setTargetSlotId] = useState(slots.find((slot) => slot.id !== currentSlot.id)?.id ?? "");
   const selectedInventory = inventory.find((item) => item.id === inventoryId);
-  const [quantity, setQuantity] = useState(selectedInventory?.quantity ?? 1);
+  const [quantity, setQuantity] = useState(String(selectedInventory?.quantity ?? 1));
+  const quantityValue = Number(quantity);
 
   useEffect(() => {
-    setQuantity(selectedInventory?.quantity ?? 1);
+    setQuantity(String(selectedInventory?.quantity ?? 1));
   }, [selectedInventory?.id, selectedInventory?.quantity]);
 
   return (
@@ -1961,7 +1996,7 @@ function MoveInventoryDialog({
             min="1"
             max={selectedInventory?.quantity ?? 1}
             value={quantity}
-            onChange={(event) => setQuantity(Number(event.target.value))}
+            onChange={(event) => setQuantity(event.target.value)}
           />
           <label className="mt-4 block text-sm font-medium">目标 Slot</label>
           <div className="mt-2">
@@ -1981,8 +2016,15 @@ function MoveInventoryDialog({
           </div>
           <button
             className="mt-5 w-full rounded-[14px] bg-[var(--accent)] px-4 py-3 font-semibold text-white disabled:opacity-40"
-            disabled={isSaving || !inventoryId || !targetSlotId || quantity < 1 || quantity > (selectedInventory?.quantity ?? 0)}
-            onClick={() => onMove(inventoryId, targetSlotId, quantity)}
+            disabled={
+              isSaving ||
+              !inventoryId ||
+              !targetSlotId ||
+              !Number.isFinite(quantityValue) ||
+              quantityValue < 1 ||
+              quantityValue > (selectedInventory?.quantity ?? 0)
+            }
+            onClick={() => onMove(inventoryId, targetSlotId, Math.floor(quantityValue))}
           >
             {isSaving ? "移动中" : "移动库存"}
           </button>
@@ -2016,7 +2058,8 @@ function CopyInventoryDialog({
 }) {
   const firstTarget = slots.find((slot) => slot.id !== row.slot?.id) ?? slots[0];
   const [targetSlotId, setTargetSlotId] = useState(firstTarget?.id ?? "");
-  const [quantity, setQuantity] = useState(row.item.quantity > 0 ? 1 : 0);
+  const [quantity, setQuantity] = useState(row.item.quantity > 0 ? "1" : "");
+  const quantityValue = Number(quantity);
 
   return (
     <Dialog title="复制库存" onClose={onClose}>
@@ -2033,7 +2076,7 @@ function CopyInventoryDialog({
         min="1"
         max={Math.max(1, row.item.quantity)}
         value={quantity}
-        onChange={(event) => setQuantity(Number(event.target.value))}
+        onChange={(event) => setQuantity(event.target.value)}
       />
       <label className="mt-4 block text-sm font-medium">目标 Slot</label>
       <div className="mt-2">
@@ -2053,8 +2096,15 @@ function CopyInventoryDialog({
       </div>
       <button
         className="mt-5 w-full rounded-[14px] bg-[var(--accent)] px-4 py-3 font-semibold text-white disabled:opacity-40"
-        disabled={!targetSlotId || row.item.quantity <= 0 || quantity < 1 || quantity > row.item.quantity || isSaving}
-        onClick={() => onCopy(targetSlotId, quantity)}
+        disabled={
+          !targetSlotId ||
+          row.item.quantity <= 0 ||
+          !Number.isFinite(quantityValue) ||
+          quantityValue < 1 ||
+          quantityValue > row.item.quantity ||
+          isSaving
+        }
+        onClick={() => onCopy(targetSlotId, Math.floor(quantityValue))}
       >
         {isSaving ? "复制中" : "复制到目标 Slot"}
       </button>
@@ -2480,6 +2530,17 @@ function formatTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function formatUploadType(contentType: string) {
+  if (contentType === "image/webp") return "WebP";
+  if (contentType === "image/jpeg") return "JPG";
+  return contentType.replace("image/", "").toUpperCase();
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function parseInventoryCsv(text: string): CsvInventoryRow[] {
