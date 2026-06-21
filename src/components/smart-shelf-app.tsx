@@ -236,8 +236,8 @@ export function SmartShelfApp() {
   const activeSlots = rackSlots.filter((slot) => productsForSlot(slot.id) > 0).length;
 
   return (
-    <main className="min-h-[100dvh] text-[var(--text)]">
-      <div className="mx-auto flex min-h-[100dvh] max-w-[1480px] flex-col">
+    <main className="min-h-[100dvh] max-w-full overflow-x-hidden text-[var(--text)]">
+      <div className="mx-auto flex min-h-[100dvh] max-w-[1480px] min-w-0 flex-col">
         <TopBar
           racks={data.racks}
           selectedRackId={rack?.id ?? ""}
@@ -255,7 +255,7 @@ export function SmartShelfApp() {
           }}
         />
 
-        <section className="flex min-w-0 flex-1 flex-col pb-28 sm:pb-32">
+        <section className="flex min-w-0 max-w-full flex-1 flex-col pb-28 sm:pb-32">
           <div className="border-b border-[var(--border)] bg-[var(--background)]/70 px-4 py-2 md:px-6 lg:px-7">
             {appMode !== "admin" ? (
               <SearchAndFilters
@@ -270,8 +270,8 @@ export function SmartShelfApp() {
           </div>
 
           {appMode === "table" ? (
-            <div className="grid flex-1 gap-4 px-4 py-4 md:px-6 xl:grid-cols-[minmax(620px,1fr)_380px] lg:gap-6 lg:px-7 lg:py-6">
-              <section>
+            <div className="grid min-w-0 flex-1 gap-4 px-3 py-3 sm:px-4 md:px-6 xl:grid-cols-[minmax(0,1fr)_380px] lg:gap-6 lg:px-7 lg:py-6">
+              <section className="min-w-0">
                 <InventoryTablePanel
                   rackName={rack?.name ?? "Rack-1"}
                   rows={visibleInventoryRows}
@@ -291,7 +291,7 @@ export function SmartShelfApp() {
                 />
               </section>
 
-              <section className="space-y-4">
+              <section className="min-w-0 space-y-4">
                 <LocationOverviewPanel
                   rackName={rack?.name ?? "Rack-1"}
                   sections={rackSections}
@@ -635,13 +635,13 @@ function BottomNavigation({
   ];
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-[var(--border)] bg-white/92 px-4 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2 shadow-[0_-12px_35px_rgb(17_17_19_/_0.08)] backdrop-blur">
-      <div className="relative mx-auto grid max-w-md grid-cols-[1fr_76px_1fr] items-end gap-2">
-        <div className="grid grid-cols-2 gap-1">
+    <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-[var(--border)] bg-white/92 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2 shadow-[0_-12px_35px_rgb(17_17_19_/_0.08)] backdrop-blur">
+      <div className="relative mx-auto grid w-full max-w-md grid-cols-[minmax(0,1fr)_64px_minmax(0,1fr)] items-end gap-1.5">
+        <div className="grid min-w-0 grid-cols-2 gap-1">
           {items.slice(0, 2).map(([mode, label]) => (
             <button
               key={mode}
-              className="rounded-[14px] px-3 py-2 text-xs font-semibold"
+              className="min-w-0 rounded-[14px] px-2 py-2 text-xs font-semibold"
               style={{
                 background: appMode === mode ? "var(--accent-soft)" : "transparent",
                 color: appMode === mode ? "var(--accent-deep)" : "var(--muted)",
@@ -653,7 +653,7 @@ function BottomNavigation({
           ))}
         </div>
         <button
-          className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-[var(--accent)] text-center text-[11px] font-bold leading-tight text-white shadow-[0_10px_24px_rgb(216_77_36_/_0.32)] disabled:opacity-60"
+          className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-[var(--accent)] text-center text-[10px] font-bold leading-tight text-white shadow-[0_10px_24px_rgb(216_77_36_/_0.32)] disabled:opacity-60"
           disabled={isSaving}
           onClick={onAddInventory}
           aria-label="拍照加库存"
@@ -662,11 +662,11 @@ function BottomNavigation({
           <br />
           加库存
         </button>
-        <div className="grid grid-cols-1 gap-1">
+        <div className="grid min-w-0 grid-cols-1 gap-1">
           {items.slice(2).map(([mode, label]) => (
             <button
               key={mode}
-              className="rounded-[14px] px-3 py-2 text-xs font-semibold"
+              className="min-w-0 rounded-[14px] px-2 py-2 text-xs font-semibold"
               style={{
                 background: appMode === mode ? "var(--accent-soft)" : "transparent",
                 color: appMode === mode ? "var(--accent-deep)" : "var(--muted)",
@@ -684,9 +684,9 @@ function BottomNavigation({
 
 function MetricPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[12px] bg-[var(--surface-soft)] px-3 py-2">
-      <p className="text-[11px] text-[var(--muted)]">{label}</p>
-      <p className="mt-1 text-sm font-semibold">{value}</p>
+    <div className="min-w-0 rounded-[12px] bg-[var(--surface-soft)] px-2 py-2 sm:px-3">
+      <p className="truncate text-[11px] text-[var(--muted)]">{label}</p>
+      <p className="mt-1 truncate text-sm font-semibold">{value}</p>
     </div>
   );
 }
@@ -715,7 +715,7 @@ function SearchAndFilters({
           onChange={(event) => onQueryChange(event.target.value)}
           placeholder="搜索商品名，快速定位 Slot"
         />
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
           {[
             ["all", "全部"],
             ["inStock", "有货"],
@@ -739,18 +739,18 @@ function SearchAndFilters({
       </div>
 
       {query.trim() ? (
-        <div className="mt-3 rounded-[14px] border border-[var(--border)] bg-white p-2 shadow-[var(--soft-shadow)]">
+        <div className="mt-3 min-w-0 rounded-[14px] border border-[var(--border)] bg-white p-2 shadow-[var(--soft-shadow)]">
           {results.length ? (
             <div className="max-h-48 space-y-1 overflow-auto">
               {results.slice(0, 8).map(({ item, slot, section, rack }) => (
                 <button
                   key={item.id}
-                  className="flex w-full items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left hover:bg-[var(--surface-soft)]"
+                  className="flex w-full min-w-0 items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left hover:bg-[var(--surface-soft)]"
                   onClick={() => onSelectResult(slot, section)}
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-semibold">{item.product.name}</span>
-                    <span className="text-xs text-[var(--muted)]">
+                    <span className="block truncate text-xs text-[var(--muted)]">
                       {rack?.name ?? "Rack-1"} / {section?.code} {section?.name} / {slot?.code}
                     </span>
                   </span>
@@ -808,12 +808,12 @@ function InventoryTablePanel({
   const missingImage = rows.filter((row) => !row.item.product.image).length;
 
   return (
-    <section className="rounded-[18px] border border-[var(--border)] bg-white shadow-[var(--soft-shadow)]">
+    <section className="min-w-0 overflow-hidden rounded-[18px] border border-[var(--border)] bg-white shadow-[var(--soft-shadow)]">
       <div className="border-b border-[var(--border)] p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <PanelTitle title="库存总表" subtitle={`${rackName} / 按商品和位置管理`} />
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-2">
+        <div className="mt-4 grid min-w-0 grid-cols-3 gap-2">
           <MetricPill label="当前显示" value={`${rows.length} 条`} />
           <MetricPill label="总数量" value={`${quantityFormatter.format(totalQuantity)} 件`} />
           <MetricPill label="异常" value={`${lowCount + missingImage} 条`} />
@@ -1001,10 +1001,10 @@ function InventoryMobileCard({
   const tone = getStockTone(item.quantity);
 
   return (
-    <article className="p-4">
-      <div className="flex gap-3">
+    <article className="min-w-0 p-3 sm:p-4">
+      <div className="flex min-w-0 gap-3">
         <button
-          className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-[14px] bg-[var(--surface-soft)] text-xs font-semibold text-[var(--muted)]"
+          className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-[14px] bg-[var(--surface-soft)] text-xs font-semibold text-[var(--muted)] sm:h-20 sm:w-20"
           onClick={() => onOpenDetail(item.id)}
         >
           {item.product.image ? (
@@ -1014,16 +1014,18 @@ function InventoryMobileCard({
             "照片"
           )}
         </button>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-hidden">
           <div className="flex min-w-0 items-start justify-between gap-2">
             <button className="min-w-0 text-left" onClick={() => onOpenDetail(item.id)}>
               <p className="truncate text-base font-semibold">{item.product.name}</p>
               <p className="mt-1 text-xs text-[var(--muted)]">{section?.code ?? "-"} / {slot?.code ?? "-"}</p>
             </button>
-            <StockBadge tone={tone} label={getStockLabel(item.quantity)} />
+            <span className="shrink-0">
+              <StockBadge tone={tone} label={getStockLabel(item.quantity)} />
+            </span>
           </div>
 
-          <div className="mt-3 grid grid-cols-[auto_1fr] gap-2">
+          <div className="mt-3 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[auto_minmax(0,1fr)]">
             <div className="flex items-center gap-1 rounded-full bg-[var(--surface-soft)] p-1">
               <button
                 className="grid h-8 w-8 place-items-center rounded-full bg-white text-base disabled:opacity-35"
@@ -1043,7 +1045,7 @@ function InventoryMobileCard({
               </button>
             </div>
             <select
-              className="min-w-0 rounded-[12px] border border-[var(--border)] bg-white px-3 text-sm outline-none focus:border-[var(--accent)]"
+              className="w-full min-w-0 rounded-[12px] border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
               value={slot?.id ?? ""}
               onChange={(event) => onMoveInventory(item.id, event.target.value)}
             >
@@ -1055,7 +1057,7 @@ function InventoryMobileCard({
             </select>
           </div>
 
-          <div className="mt-3 flex gap-1">
+          <div className="mt-3 flex min-w-0 flex-wrap gap-1">
             <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onOpenDetail(item.id)}>
               查看
             </button>
@@ -1100,11 +1102,11 @@ function LocationOverviewPanel({
   onRename: (section: Section) => void;
 }) {
   return (
-    <section className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)]">
+    <section className="min-w-0 overflow-hidden rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)]">
       <div className="flex items-start justify-between gap-3">
         <PanelTitle title="位置概览" subtitle={rackName} />
       </div>
-      <div className="mt-4 space-y-3">
+      <div className="mt-4 min-w-0 space-y-3">
         {sections.map((section) => {
           const sectionSlots = slots.filter((slot) => slot.section_id === section.id);
           return (
@@ -1113,9 +1115,9 @@ function LocationOverviewPanel({
               className="rounded-[14px] border border-[var(--border)] bg-[var(--surface)] p-3"
               style={{ borderColor: selectedSectionId === section.id ? "var(--accent)" : "var(--border)" }}
             >
-              <div className="flex items-center justify-between gap-3">
-                <button className="text-left" onClick={() => onSelectSection(section)}>
-                  <p className="text-sm font-semibold">{section.code} {section.name}</p>
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <button className="min-w-0 text-left" onClick={() => onSelectSection(section)}>
+                  <p className="truncate text-sm font-semibold">{section.code} {section.name}</p>
                   <p className="mt-1 text-xs text-[var(--muted)]">
                     {filledSlotsForSection(section.id)} 个位置有货 · {totalForSection(section.id)} 件
                   </p>
@@ -1124,18 +1126,18 @@ function LocationOverviewPanel({
                   改名
                 </button>
               </div>
-              <div className="mt-3 grid grid-cols-5 gap-1.5">
+              <div className="mt-3 grid min-w-0 grid-cols-[repeat(auto-fit,minmax(56px,1fr))] gap-1.5">
                 {sectionSlots.map((slot) => (
                   <button
                     key={slot.id}
-                    className="rounded-[10px] border px-2 py-2 text-left text-xs"
+                    className="min-w-0 rounded-[10px] border px-2 py-2 text-left text-xs"
                     style={{
                       borderColor: selectedSlotId === slot.id ? "var(--accent)" : "var(--border)",
                       background: selectedSlotId === slot.id ? "var(--accent-soft)" : "#fff",
                     }}
                     onClick={() => onSelectSlot(slot)}
                   >
-                    <span className="block font-semibold">{slot.code}</span>
+                    <span className="block truncate font-semibold">{slot.code}</span>
                     <span className="mt-1 block text-[11px] text-[var(--muted)]">{productsForSlot(slot.id)} / {totalForSlot(slot.id)}</span>
                   </button>
                 ))}
@@ -1156,7 +1158,7 @@ function ProductGalleryPage({
   onOpenDetail: (inventoryId: string) => void;
 }) {
   return (
-    <section className="px-4 py-4 md:px-6 lg:px-7 lg:py-6">
+    <section className="min-w-0 px-3 py-3 sm:px-4 md:px-6 lg:px-7 lg:py-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <PanelTitle title="图片视图" subtitle="通过商品图快速确认位置" />
         <span className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-[var(--muted)]">{rows.length} 个库存记录</span>
@@ -1166,7 +1168,7 @@ function ProductGalleryPage({
           {rows.map(({ item, slot, section, rack }) => (
             <button
               key={item.id}
-              className="overflow-hidden rounded-[16px] border border-[var(--border)] bg-white text-left shadow-[var(--soft-shadow)] transition hover:-translate-y-0.5"
+              className="min-w-0 overflow-hidden rounded-[16px] border border-[var(--border)] bg-white text-left shadow-[var(--soft-shadow)] transition hover:-translate-y-0.5"
               onClick={() => onOpenDetail(item.id)}
             >
               <div className="grid aspect-[4/3] place-items-center bg-[var(--surface-soft)] text-sm font-semibold text-[var(--muted)]">
@@ -1227,7 +1229,7 @@ function InventoryPanel({
   const photoMissing = inventory.filter((item) => !item.product.image).length;
 
   return (
-    <div className="rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)] lg:min-h-[calc(100dvh-150px)]">
+    <div className="min-w-0 overflow-hidden rounded-[18px] border border-[var(--border)] bg-white p-4 shadow-[var(--soft-shadow)] lg:min-h-[calc(100dvh-150px)]">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-sm text-[var(--muted)]">{section?.code} {section?.name}</p>
@@ -1254,7 +1256,7 @@ function InventoryPanel({
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-3 gap-2">
+      <div className="mt-4 grid min-w-0 grid-cols-3 gap-2">
         <MetricPill label="当前显示" value={`${inventory.length}`} />
         <MetricPill label="低库存" value={`${lowCount}`} />
         <MetricPill label="缺图片" value={`${photoMissing}`} />
@@ -2054,7 +2056,7 @@ function InventoryDetailDrawer({
 
   return (
     <div className="fixed inset-0 z-40 bg-black/20">
-      <aside className="ml-auto flex h-full w-full max-w-[440px] flex-col border-l border-[var(--border)] bg-[var(--background)] shadow-[var(--shadow)]">
+      <aside className="ml-auto flex h-full w-full max-w-[min(440px,100vw)] flex-col border-l border-[var(--border)] bg-[var(--background)] shadow-[var(--shadow)]">
         <div className="flex items-center justify-between border-b border-[var(--border)] bg-white px-5 py-4">
           <div>
             <p className="text-sm text-[var(--muted)]">{row.section?.code ?? "-"} / {row.slot?.code ?? "-"}</p>
@@ -2174,8 +2176,8 @@ function Dialog({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-40 grid place-items-end bg-black/20 p-4 lg:place-items-center">
-      <section className="w-full max-w-md rounded-[18px] border border-[var(--border)] bg-[var(--background)] p-4 shadow-[var(--shadow)]">
+    <div className="fixed inset-0 z-40 grid place-items-end bg-black/20 p-3 lg:place-items-center lg:p-4">
+      <section className="w-full max-w-[calc(100vw-24px)] rounded-[18px] border border-[var(--border)] bg-[var(--background)] p-4 shadow-[var(--shadow)] sm:max-w-md">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">{title}</h2>
           <button className="grid h-9 w-9 place-items-center rounded-full bg-white text-xl" onClick={onClose} aria-label="关闭">
