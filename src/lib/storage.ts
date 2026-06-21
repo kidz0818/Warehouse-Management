@@ -15,6 +15,64 @@ const newId = (prefix: string) =>
 const activeInventory = (inventory: Inventory[]) =>
   inventory.filter((item) => !item.deleted_at && !item.archived_at && !item.product.archived_at);
 
+type UploadImage = {
+  blob: Blob;
+  contentType: "image/webp" | "image/jpeg" | "image/png";
+  extension: "webp" | "jpg" | "png";
+};
+
+const supportedImageTypes = new Set(["image/webp", "image/jpeg", "image/png"]);
+
+function getImageExtension(contentType: UploadImage["contentType"]): UploadImage["extension"] {
+  if (contentType === "image/webp") return "webp";
+  if (contentType === "image/png") return "png";
+  return "jpg";
+}
+
+async function loadImageSource(file: File): Promise<{
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  cleanup: () => void;
+}> {
+  if ("createImageBitmap" in window) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      return {
+        source: bitmap,
+        width: bitmap.width,
+        height: bitmap.height,
+        cleanup: () => bitmap.close(),
+      };
+    } catch {
+      // Fall back to an HTML image below for browsers/files that createImageBitmap cannot decode.
+    }
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  const image = new Image();
+  image.decoding = "async";
+  image.src = objectUrl;
+
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error("Failed to read image file."));
+  });
+
+  return {
+    source: image,
+    width: image.naturalWidth,
+    height: image.naturalHeight,
+    cleanup: () => URL.revokeObjectURL(objectUrl),
+  };
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, contentType: string, quality: number) {
+  return new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, contentType, quality);
+  });
+}
+
 function createMovement(input: Omit<InventoryMovement, "id" | "created_at">): InventoryMovement {
   return {
     ...input,
@@ -23,35 +81,41 @@ function createMovement(input: Omit<InventoryMovement, "id" | "created_at">): In
   };
 }
 
-export async function compressImageToWebp(file: File): Promise<Blob> {
-  const bitmap = await createImageBitmap(file);
+export async function compressImageForUpload(file: File): Promise<UploadImage> {
+  const image = await loadImageSource(file);
   const maxSide = 1400;
-  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
 
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
 
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas is not available for image compression.");
-  context.drawImage(bitmap, 0, 0, width, height);
-  bitmap.close();
+  try {
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Canvas is not available for image compression.");
+    context.drawImage(image.source, 0, 0, width, height);
+  } finally {
+    image.cleanup();
+  }
 
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          reject(new Error("Failed to compress image."));
-          return;
-        }
-        resolve(blob);
-      },
-      "image/webp",
-      0.82,
-    );
-  });
+  const webp = await canvasToBlob(canvas, "image/webp", 0.82);
+  if (webp?.type === "image/webp") {
+    return { blob: webp, contentType: "image/webp", extension: "webp" };
+  }
+
+  const jpeg = await canvasToBlob(canvas, "image/jpeg", 0.84);
+  if (jpeg?.type === "image/jpeg") {
+    return { blob: jpeg, contentType: "image/jpeg", extension: "jpg" };
+  }
+
+  if (supportedImageTypes.has(file.type)) {
+    const contentType = file.type as UploadImage["contentType"];
+    return { blob: file, contentType, extension: getImageExtension(contentType) };
+  }
+
+  throw new Error("Only PNG, JPG, and WebP images are supported.");
 }
 
 async function uploadProductImage(file: File): Promise<string> {
@@ -62,14 +126,14 @@ async function uploadProductImage(file: File): Promise<string> {
   const user = await getCurrentUser();
   if (!user) throw new Error("Please sign in before uploading images.");
 
-  const webp = await compressImageToWebp(file);
-  const path = `${user.id}/products/${Date.now().toString(36)}-${crypto.randomUUID()}.webp`;
+  const image = await compressImageForUpload(file);
+  const path = `${user.id}/products/${Date.now().toString(36)}-${crypto.randomUUID()}.${image.extension}`;
 
   const { error } = await supabase.storage
     .from(PRODUCT_IMAGE_BUCKET)
-    .upload(path, webp, {
+    .upload(path, image.blob, {
       cacheControl: "31536000",
-      contentType: "image/webp",
+      contentType: image.contentType,
       upsert: false,
     });
 

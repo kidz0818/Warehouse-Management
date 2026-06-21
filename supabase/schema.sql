@@ -278,7 +278,7 @@ create policy "Owner write inventory movements" on inventory_movements
 for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('product-images', 'product-images', true, 5242880, array['image/webp'])
+values ('product-images', 'product-images', true, 5242880, array['image/webp', 'image/jpeg', 'image/png']::text[])
 on conflict (id) do update
 set public = excluded.public,
     file_size_limit = excluded.file_size_limit,
