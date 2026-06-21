@@ -51,6 +51,7 @@ export function SmartShelfApp() {
   const [renameRackOpen, setRenameRackOpen] = useState(false);
   const [createSlotOpen, setCreateSlotOpen] = useState(false);
   const [detailInventoryId, setDetailInventoryId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!hasSupabaseEnv || !supabase) {
@@ -193,8 +194,12 @@ export function SmartShelfApp() {
 
   const updateData = async (operation: () => Promise<ShelfData>) => {
     setIsSaving(true);
+    setActionError(null);
     try {
       setData(await operation());
+    } catch (error) {
+      setActionError(getErrorMessage(error));
+      throw error;
     } finally {
       setIsSaving(false);
     }
@@ -236,7 +241,6 @@ export function SmartShelfApp() {
         <TopBar
           racks={data.racks}
           selectedRackId={rack?.id ?? ""}
-          appMode={appMode}
           isSaving={isSaving}
           userLabel={user ? user.email ?? "已登录" : "本地 Demo"}
           totalInventory={totalInventory}
@@ -249,14 +253,10 @@ export function SmartShelfApp() {
             if (nextSection) setSelectedSectionId(nextSection.id);
             if (nextSlot) setSelectedSlotId(nextSlot.id);
           }}
-          onRenameRack={() => setRenameRackOpen(true)}
-          onCreateRack={() => setCreateRackOpen(true)}
-          onChangeMode={setAppMode}
-          onAddInventory={() => setAddOpen(true)}
         />
 
-        <section className="flex min-w-0 flex-1 flex-col pb-4">
-          <div className="border-b border-[var(--border)] bg-[var(--background)]/70 px-4 py-4 md:px-6 lg:px-7">
+        <section className="flex min-w-0 flex-1 flex-col pb-28 sm:pb-32">
+          <div className="border-b border-[var(--border)] bg-[var(--background)]/70 px-4 py-2 md:px-6 lg:px-7">
             {appMode !== "admin" ? (
               <SearchAndFilters
                 query={query}
@@ -350,14 +350,32 @@ export function SmartShelfApp() {
         </section>
       </div>
 
+      <BottomNavigation
+        appMode={appMode}
+        isSaving={isSaving}
+        onChangeMode={setAppMode}
+        onAddInventory={() => {
+          setActionError(null);
+          setAddOpen(true);
+        }}
+      />
+
       {addOpen && selectedSlot ? (
         <AddInventoryDialog
           slot={selectedSlot}
           isSaving={isSaving}
-          onClose={() => setAddOpen(false)}
-          onSave={async (input) => {
-            await updateData(() => addInventory(data, input));
+          errorMessage={actionError}
+          onClose={() => {
+            setActionError(null);
             setAddOpen(false);
+          }}
+          onSave={async (input) => {
+            try {
+              await updateData(() => addInventory(data, input));
+              setAddOpen(false);
+            } catch {
+              // The dialog renders the error message from updateData.
+            }
           }}
         />
       ) : null}
@@ -550,92 +568,117 @@ function SignOutPanel() {
 function TopBar({
   racks,
   selectedRackId,
-  appMode,
   isSaving,
   userLabel,
   totalInventory,
   activeSlots,
   totalSlots,
   onSelectRack,
-  onRenameRack,
-  onCreateRack,
-  onChangeMode,
-  onAddInventory,
 }: {
   racks: Array<{ id: string; name: string }>;
   selectedRackId: string;
-  appMode: AppMode;
   isSaving: boolean;
   userLabel: string;
   totalInventory: number;
   activeSlots: number;
   totalSlots: number;
   onSelectRack: (rackId: string) => void;
-  onRenameRack: () => void;
-  onCreateRack: () => void;
-  onChangeMode: (mode: AppMode) => void;
-  onAddInventory: () => void;
 }) {
   return (
-    <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--background)]/94 px-4 py-3 backdrop-blur md:px-6 lg:px-7">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
+    <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--background)]/90 px-4 py-2 backdrop-blur md:px-6 lg:px-7">
+      <div className="flex items-center gap-3">
+        <div className="hidden shrink-0 sm:block">
           <AppMark />
-          <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold">仓库库存管理</h1>
-            <p className="text-xs text-[var(--muted)]">
-              {quantityFormatter.format(totalInventory)} 件 · {activeSlots}/{totalSlots || 0} 位置有货
-            </p>
-          </div>
         </div>
-
-        <div className="grid gap-2 sm:grid-cols-[minmax(160px,1fr)_auto_auto] lg:flex lg:flex-1 lg:flex-wrap lg:items-center lg:justify-end">
-          <select
-            className="min-h-10 min-w-0 rounded-[14px] border border-[var(--border)] bg-white px-3 text-sm font-semibold outline-none focus:border-[var(--accent)]"
-            value={selectedRackId}
-            onChange={(event) => onSelectRack(event.target.value)}
-          >
-            {racks.map((rack) => (
-              <option key={rack.id} value={rack.id}>
-                {rack.name}
-              </option>
-            ))}
-          </select>
-          <button className="rounded-[14px] border border-[var(--border)] bg-white px-3 py-2 text-sm font-semibold text-[var(--muted)]" onClick={onRenameRack}>
-            改名
-          </button>
-          <button className="rounded-[14px] border border-[var(--border)] bg-white px-3 py-2 text-sm font-semibold text-[var(--muted)]" onClick={onCreateRack}>
-            新建 Rack
-          </button>
-          <div className="grid grid-cols-3 rounded-[14px] border border-[var(--border)] bg-white p-1 sm:col-span-2 lg:col-span-1">
-            {[
-              ["table", "库存表"],
-              ["gallery", "图片"],
-              ["admin", "管理"],
-            ].map(([mode, label]) => (
-              <button
-                key={mode}
-                className="rounded-[11px] px-3 py-2 text-xs font-semibold transition"
-                style={{
-                  background: appMode === mode ? "var(--accent)" : "transparent",
-                  color: appMode === mode ? "#fff" : "var(--muted)",
-                }}
-                onClick={() => onChangeMode(mode as AppMode)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <button className="rounded-[14px] bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white" onClick={onAddInventory}>
-            添加库存
-          </button>
-          <div className="hidden items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-2 text-xs text-[var(--muted)] lg:flex">
-            <span className="h-2 w-2 rounded-full bg-[var(--accent)]" />
-            {isSaving ? "保存中" : userLabel}
+        <div className="min-w-0 flex-1">
+          <div className="grid gap-2 sm:grid-cols-[minmax(140px,240px)_1fr] sm:items-center">
+            <select
+              className="min-h-10 min-w-0 rounded-[14px] border border-[var(--border)] bg-white px-3 text-sm font-semibold outline-none focus:border-[var(--accent)]"
+              value={selectedRackId}
+              onChange={(event) => onSelectRack(event.target.value)}
+            >
+              {racks.map((rack) => (
+                <option key={rack.id} value={rack.id}>
+                  {rack.name}
+                </option>
+              ))}
+            </select>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">仓库库存管理</p>
+              <p className="truncate text-xs text-[var(--muted)]">
+                {quantityFormatter.format(totalInventory)} 件 · {activeSlots}/{totalSlots || 0} 位置有货 ·{" "}
+                {isSaving ? "保存中" : userLabel}
+              </p>
+            </div>
           </div>
         </div>
       </div>
     </header>
+  );
+}
+
+function BottomNavigation({
+  appMode,
+  isSaving,
+  onChangeMode,
+  onAddInventory,
+}: {
+  appMode: AppMode;
+  isSaving: boolean;
+  onChangeMode: (mode: AppMode) => void;
+  onAddInventory: () => void;
+}) {
+  const items: Array<[AppMode, string]> = [
+    ["table", "库存"],
+    ["gallery", "图片"],
+    ["admin", "后台"],
+  ];
+
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-[var(--border)] bg-white/92 px-4 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2 shadow-[0_-12px_35px_rgb(17_17_19_/_0.08)] backdrop-blur">
+      <div className="relative mx-auto grid max-w-md grid-cols-[1fr_76px_1fr] items-end gap-2">
+        <div className="grid grid-cols-2 gap-1">
+          {items.slice(0, 2).map(([mode, label]) => (
+            <button
+              key={mode}
+              className="rounded-[14px] px-3 py-2 text-xs font-semibold"
+              style={{
+                background: appMode === mode ? "var(--accent-soft)" : "transparent",
+                color: appMode === mode ? "var(--accent-deep)" : "var(--muted)",
+              }}
+              onClick={() => onChangeMode(mode)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <button
+          className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-[var(--accent)] text-center text-[11px] font-bold leading-tight text-white shadow-[0_10px_24px_rgb(216_77_36_/_0.32)] disabled:opacity-60"
+          disabled={isSaving}
+          onClick={onAddInventory}
+          aria-label="拍照加库存"
+        >
+          拍照
+          <br />
+          加库存
+        </button>
+        <div className="grid grid-cols-1 gap-1">
+          {items.slice(2).map(([mode, label]) => (
+            <button
+              key={mode}
+              className="rounded-[14px] px-3 py-2 text-xs font-semibold"
+              style={{
+                background: appMode === mode ? "var(--accent-soft)" : "transparent",
+                color: appMode === mode ? "var(--accent-deep)" : "var(--muted)",
+              }}
+              onClick={() => onChangeMode(mode)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </nav>
   );
 }
 
@@ -664,15 +707,15 @@ function SearchAndFilters({
   onSelectResult: (slot?: Slot, section?: Section) => void;
 }) {
   return (
-    <div className="mt-0 lg:mt-4">
-      <div className="grid gap-3 lg:grid-cols-[minmax(280px,1fr)_auto]">
+    <div>
+      <div className="grid gap-2 lg:grid-cols-[minmax(280px,1fr)_auto]">
         <input
-          className="min-h-11 rounded-[14px] border border-[var(--border)] bg-white px-4 text-sm outline-none focus:border-[var(--accent)]"
+          className="min-h-10 rounded-[14px] border border-[var(--border)] bg-white/95 px-4 text-sm outline-none focus:border-[var(--accent)]"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           placeholder="搜索商品名，快速定位 Slot"
         />
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="flex gap-2 overflow-x-auto pb-1">
           {[
             ["all", "全部"],
             ["inStock", "有货"],
@@ -681,7 +724,7 @@ function SearchAndFilters({
           ].map(([value, label]) => (
             <button
               key={value}
-              className="rounded-[14px] border px-3 py-2 text-xs font-medium"
+              className="shrink-0 rounded-[14px] border px-3 py-2 text-xs font-medium"
               style={{
                 borderColor: filterMode === value ? "var(--accent)" : "var(--border)",
                 background: filterMode === value ? "var(--accent-soft)" : "#fff",
@@ -769,9 +812,6 @@ function InventoryTablePanel({
       <div className="border-b border-[var(--border)] p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <PanelTitle title="库存总表" subtitle={`${rackName} / 按商品和位置管理`} />
-          <button className="rounded-[14px] bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white" onClick={onOpenAdd}>
-            添加库存
-          </button>
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2">
           <MetricPill label="当前显示" value={`${rows.length} 条`} />
@@ -1689,13 +1729,15 @@ function SkeletonRows() {
 function AddInventoryDialog({
   slot,
   isSaving,
+  errorMessage,
   onClose,
   onSave,
 }: {
   slot: Slot;
   isSaving: boolean;
+  errorMessage?: string | null;
   onClose: () => void;
-  onSave: (input: InventoryInsert) => void;
+  onSave: (input: InventoryInsert) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -1724,6 +1766,7 @@ function AddInventoryDialog({
         className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 text-sm outline-none file:mr-3 file:rounded-full file:border-0 file:bg-[var(--surface-soft)] file:px-3 file:py-1.5 file:text-sm"
         type="file"
         accept="image/*"
+        capture="environment"
         onChange={(event) => setImageFile(event.target.files?.[0] ?? null)}
       />
       <p className="mt-2 text-xs text-[var(--muted)]">会在浏览器内压缩成 WebP 再上传。</p>
@@ -1734,6 +1777,11 @@ function AddInventoryDialog({
         onChange={(event) => setImage(event.target.value)}
         placeholder="可选，上传文件优先"
       />
+      {errorMessage ? (
+        <p className="mt-4 rounded-[14px] border border-[var(--danger)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">
+          {errorMessage}
+        </p>
+      ) : null}
       <button
         className="mt-5 w-full rounded-[14px] bg-[var(--accent)] px-4 py-3 font-semibold text-white disabled:opacity-40"
         disabled={!name.trim() || isSaving}
@@ -2197,4 +2245,12 @@ function formatTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "object" && error && "message" in error) {
+    return String((error as { message?: unknown }).message);
+  }
+  return "保存失败，请刷新后再试。";
 }

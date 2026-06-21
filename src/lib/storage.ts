@@ -174,6 +174,8 @@ export async function addInventory(data: ShelfData, input: InventoryInsert): Pro
       .from("products")
       .select("id, image, archived_at")
       .eq("name", input.name)
+      .order("created_at", { ascending: true })
+      .limit(1)
       .maybeSingle();
 
     if (productLookupError) throw productLookupError;
@@ -206,6 +208,8 @@ export async function addInventory(data: ShelfData, input: InventoryInsert): Pro
       .select("id, quantity")
       .eq("product_id", productId)
       .eq("slot_id", input.slotId)
+      .order("created_at", { ascending: true })
+      .limit(1)
       .maybeSingle();
 
     if (inventoryLookupError) throw inventoryLookupError;

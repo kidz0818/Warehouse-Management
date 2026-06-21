@@ -53,6 +53,7 @@ body {
     sans-serif;
   letter-spacing: 0;
   text-rendering: geometricPrecision;
+  touch-action: manipulation;
 }
 
 button,
