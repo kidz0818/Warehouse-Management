@@ -275,6 +275,24 @@ export function SmartShelfApp() {
     }, `已导入 ${rows.length} 条库存`);
   };
 
+  const createSlotFromPicker = async (sectionId: string, code: string) => {
+    let createdSlot: Slot | undefined;
+    await updateData(async () => {
+      const nextData = await createSlot(data, sectionId, code);
+      createdSlot = [...nextData.slots]
+        .reverse()
+        .find((entry) => entry.section_id === sectionId && entry.code.toLowerCase() === code.toLowerCase());
+      return nextData;
+    }, `Slot ${code} 已创建`);
+
+    if (createdSlot) {
+      setSelectedSectionId(sectionId);
+      setSelectedSlotId(createdSlot.id);
+    }
+
+    return createdSlot;
+  };
+
   const productsForSlot = (slotId: string) =>
     rackInventory.filter((item) => item.slot_id === slotId).length;
 
@@ -399,8 +417,10 @@ export function SmartShelfApp() {
         <AddInventoryDialog
           slot={selectedSlot}
           slots={rackSlots}
+          sections={rackSections}
           isSaving={isSaving}
           errorMessage={actionError}
+          onCreateSlot={createSlotFromPicker}
           onClose={() => {
             setActionError(null);
             setAddOpen(false);
@@ -421,8 +441,10 @@ export function SmartShelfApp() {
         <MoveInventoryDialog
           inventory={slotInventory}
           slots={rackSlots}
+          sections={rackSections}
           currentSlot={selectedSlot}
           isSaving={isSaving}
+          onCreateSlot={createSlotFromPicker}
           onClose={() => setMoveOpen(false)}
           onMove={async (inventoryId, targetSlotId, quantity) => {
             const targetSlot = rackSlots.find((entry) => entry.id === targetSlotId);
@@ -1600,16 +1622,29 @@ function ProductImage({ src, emptyLabel = "照片" }: { src?: string | null; emp
 
 function SlotPicker({
   slots,
+  sections,
   selectedSlotId,
   onSelectSlot,
   excludeSlotId,
+  isSaving,
+  onCreateSlot,
 }: {
   slots: Slot[];
+  sections?: Section[];
   selectedSlotId: string;
   onSelectSlot: (slotId: string) => void;
   excludeSlotId?: string;
+  isSaving?: boolean;
+  onCreateSlot?: (sectionId: string, code: string) => Promise<Slot | undefined>;
 }) {
   const [query, setQuery] = useState("");
+  const [newSectionId, setNewSectionId] = useState(sections?.[0]?.id ?? "");
+  const [newCode, setNewCode] = useState("");
+
+  useEffect(() => {
+    if (!newSectionId && sections?.[0]?.id) setNewSectionId(sections[0].id);
+  }, [newSectionId, sections]);
+
   const visibleSlots = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return slots
@@ -1642,6 +1677,44 @@ function SlotPicker({
           </button>
         ))}
       </div>
+      {onCreateSlot && sections?.length ? (
+        <details className="mt-3 rounded-[14px] bg-[var(--surface-soft)] px-3 py-2">
+          <summary className="text-sm font-semibold text-[var(--muted)]">新建 Slot</summary>
+          <div className="mt-3 grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)]">
+            <select
+              className="rounded-[12px] border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+              value={newSectionId}
+              onChange={(event) => setNewSectionId(event.target.value)}
+            >
+              {sections.map((section) => (
+                <option key={section.id} value={section.id}>
+                  {section.code} {section.name}
+                </option>
+              ))}
+            </select>
+            <input
+              className="rounded-[12px] border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+              value={newCode}
+              onChange={(event) => setNewCode(event.target.value)}
+              placeholder="例如 A3、箱子-2"
+            />
+          </div>
+          <button
+            className="mt-2 w-full rounded-[12px] bg-[var(--accent)] px-3 py-2 text-sm font-semibold text-white disabled:opacity-40"
+            disabled={!newSectionId || !newCode.trim() || isSaving}
+            onClick={async () => {
+              const created = await onCreateSlot(newSectionId, newCode.trim());
+              if (created) {
+                onSelectSlot(created.id);
+                setQuery(created.code);
+                setNewCode("");
+              }
+            }}
+          >
+            {isSaving ? "创建中" : "创建并选择"}
+          </button>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -1649,17 +1722,21 @@ function SlotPicker({
 function AddInventoryDialog({
   slot,
   slots,
+  sections,
   isSaving,
   errorMessage,
   onClose,
   onSave,
+  onCreateSlot,
 }: {
   slot: Slot;
   slots: Slot[];
+  sections: Section[];
   isSaving: boolean;
   errorMessage?: string | null;
   onClose: () => void;
   onSave: (input: InventoryInsert) => Promise<void>;
+  onCreateSlot: (sectionId: string, code: string) => Promise<Slot | undefined>;
 }) {
   const [step, setStep] = useState<"product" | "slot">("product");
   const [name, setName] = useState("");
@@ -1732,7 +1809,18 @@ function AddInventoryDialog({
           </details>
         </>
       ) : (
-        <SlotPicker slots={slots} selectedSlotId={slotId} onSelectSlot={setSlotId} />
+        <SlotPicker
+          slots={slots}
+          sections={sections}
+          selectedSlotId={slotId}
+          isSaving={isSaving}
+          onSelectSlot={setSlotId}
+          onCreateSlot={async (sectionId, code) => {
+            const created = await onCreateSlot(sectionId, code);
+            if (created) setSlotId(created.id);
+            return created;
+          }}
+        />
       )}
 
       {errorMessage ? (
@@ -1766,17 +1854,21 @@ function AddInventoryDialog({
 function MoveInventoryDialog({
   inventory,
   slots,
+  sections,
   currentSlot,
   isSaving,
   onClose,
   onMove,
+  onCreateSlot,
 }: {
   inventory: Inventory[];
   slots: Slot[];
+  sections: Section[];
   currentSlot: Slot;
   isSaving: boolean;
   onClose: () => void;
   onMove: (inventoryId: string, targetSlotId: string, quantity: number) => void;
+  onCreateSlot: (sectionId: string, code: string) => Promise<Slot | undefined>;
 }) {
   const [inventoryId, setInventoryId] = useState(inventory[0]?.id ?? "");
   const [targetSlotId, setTargetSlotId] = useState(slots.find((slot) => slot.id !== currentSlot.id)?.id ?? "");
@@ -1819,9 +1911,16 @@ function MoveInventoryDialog({
           <div className="mt-2">
             <SlotPicker
               slots={slots}
+              sections={sections}
               selectedSlotId={targetSlotId}
               excludeSlotId={currentSlot.id}
+              isSaving={isSaving}
               onSelectSlot={setTargetSlotId}
+              onCreateSlot={async (sectionId, code) => {
+                const created = await onCreateSlot(sectionId, code);
+                if (created) setTargetSlotId(created.id);
+                return created;
+              }}
             />
           </div>
           <button
@@ -2355,7 +2454,7 @@ function getErrorMessage(error: unknown) {
     return "这条记录已经存在，请刷新后再试一次。";
   }
 
-  if (normalized.includes("only png") || normalized.includes("failed to read image")) {
+  if (normalized.includes("only png") || normalized.includes("failed to read image") || normalized.includes("could not compress")) {
     return "图片读取失败，请换一张 PNG、JPG 或 WebP 图片。";
   }
 

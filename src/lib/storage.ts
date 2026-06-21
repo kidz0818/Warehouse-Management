@@ -17,17 +17,9 @@ const activeInventory = (inventory: Inventory[]) =>
 
 type UploadImage = {
   blob: Blob;
-  contentType: "image/webp" | "image/jpeg" | "image/png";
-  extension: "webp" | "jpg" | "png";
+  contentType: "image/webp" | "image/jpeg";
+  extension: "webp" | "jpg";
 };
-
-const supportedImageTypes = new Set(["image/webp", "image/jpeg", "image/png"]);
-
-function getImageExtension(contentType: UploadImage["contentType"]): UploadImage["extension"] {
-  if (contentType === "image/webp") return "webp";
-  if (contentType === "image/png") return "png";
-  return "jpg";
-}
 
 async function loadImageSource(file: File): Promise<{
   source: CanvasImageSource;
@@ -73,6 +65,20 @@ function canvasToBlob(canvas: HTMLCanvasElement, contentType: string, quality: n
   });
 }
 
+function dataUrlToBlob(dataUrl: string) {
+  const [meta, data] = dataUrl.split(",");
+  const contentType = meta.match(/data:(.*?);base64/)?.[1];
+  if (!contentType || !data) return null;
+
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return new Blob([bytes], { type: contentType });
+}
+
 function createMovement(input: Omit<InventoryMovement, "id" | "created_at">): InventoryMovement {
   return {
     ...input,
@@ -110,12 +116,23 @@ export async function compressImageForUpload(file: File): Promise<UploadImage> {
     return { blob: jpeg, contentType: "image/jpeg", extension: "jpg" };
   }
 
-  if (supportedImageTypes.has(file.type)) {
-    const contentType = file.type as UploadImage["contentType"];
-    return { blob: file, contentType, extension: getImageExtension(contentType) };
+  const jpegDataUrl = canvas.toDataURL("image/jpeg", 0.84);
+  if (jpegDataUrl.startsWith("data:image/jpeg")) {
+    const jpegFromDataUrl = dataUrlToBlob(jpegDataUrl);
+    if (jpegFromDataUrl?.type === "image/jpeg") {
+      return { blob: jpegFromDataUrl, contentType: "image/jpeg", extension: "jpg" };
+    }
   }
 
-  throw new Error("Only PNG, JPG, and WebP images are supported.");
+  if (file.type === "image/webp") {
+    return { blob: file, contentType: "image/webp", extension: "webp" };
+  }
+
+  if (file.type === "image/jpeg") {
+    return { blob: file, contentType: "image/jpeg", extension: "jpg" };
+  }
+
+  throw new Error("This browser could not compress the image. Please choose a JPG or WebP image.");
 }
 
 async function uploadProductImage(file: File): Promise<string> {
