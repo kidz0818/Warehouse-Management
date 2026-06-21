@@ -63,6 +63,7 @@ export function SmartShelfApp() {
   const [createRackOpen, setCreateRackOpen] = useState(false);
   const [renameRackOpen, setRenameRackOpen] = useState(false);
   const [createSlotOpen, setCreateSlotOpen] = useState(false);
+  const [copyInventoryId, setCopyInventoryId] = useState<string | null>(null);
   const [detailInventoryId, setDetailInventoryId] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -181,6 +182,10 @@ export function SmartShelfApp() {
     () => inventoryRows.find((row) => row.item.id === detailInventoryId),
     [detailInventoryId, inventoryRows],
   );
+  const copyRow = useMemo(
+    () => inventoryRows.find((row) => row.item.id === copyInventoryId),
+    [copyInventoryId, inventoryRows],
+  );
 
   if (!authChecked) {
     return <FullScreenStatus title="正在检查登录状态" subtitle="Smart Shelf 正在连接 Supabase。" />;
@@ -248,6 +253,26 @@ export function SmartShelfApp() {
     await updateData(
       () => moveInventory(data, inventoryId, targetSlotId, quantity),
       `已移动到 ${targetSlot?.code ?? "目标 Slot"}`,
+    );
+    setSelectedSlotId(targetSlotId);
+  };
+
+  const copyInventoryToSlot = async (inventoryId: string, targetSlotId: string, quantity: number) => {
+    if (isSaving) return;
+    const current = data.inventory.find((item) => item.id === inventoryId);
+    if (!current) return;
+    if (current.quantity <= 0) return;
+    const targetSlot = rackSlots.find((entry) => entry.id === targetSlotId);
+
+    await updateData(
+      () =>
+        addInventory(data, {
+          name: current.product.name,
+          quantity: Math.max(1, Math.min(current.quantity || 1, quantity)),
+          image: current.product.image ?? null,
+          slotId: targetSlotId,
+        }),
+      `已复制到 ${targetSlot?.code ?? "目标 Slot"}`,
     );
     setSelectedSlotId(targetSlotId);
   };
@@ -340,6 +365,7 @@ export function SmartShelfApp() {
                     if (slot) setSelectedSlotId(slot.id);
                   }}
                   onOpenDetail={(inventoryId) => setDetailInventoryId(inventoryId)}
+                  onOpenCopy={(inventoryId) => setCopyInventoryId(inventoryId)}
                   onChangeQuantity={updateQuantity}
                   onMoveInventory={moveInventoryToSlot}
                   onOpenAdd={() => setAddOpen(true)}
@@ -455,6 +481,21 @@ export function SmartShelfApp() {
         />
       ) : null}
 
+      {copyRow ? (
+        <CopyInventoryDialog
+          row={copyRow}
+          slots={rackSlots}
+          sections={rackSections}
+          isSaving={isSaving}
+          onClose={() => setCopyInventoryId(null)}
+          onCreateSlot={createSlotFromPicker}
+          onCopy={async (targetSlotId, quantity) => {
+            await copyInventoryToSlot(copyRow.item.id, targetSlotId, quantity);
+            setCopyInventoryId(null);
+          }}
+        />
+      ) : null}
+
       {renameOpen && selectedSection ? (
         <RenameSectionDialog
           section={selectedSection}
@@ -518,6 +559,7 @@ export function SmartShelfApp() {
             await updateData(() => updateProductDetails(data, detailRow.item.product_id, input), "商品已保存");
           }}
           onChangeQuantity={(delta) => updateQuantity(detailRow.item.id, delta)}
+          onOpenCopy={() => setCopyInventoryId(detailRow.item.id)}
           onArchive={() => {
             setConfirmAction({
               title: "归档这条库存？",
@@ -880,6 +922,7 @@ function InventoryTablePanel({
   filterMode,
   onSelectRow,
   onOpenDetail,
+  onOpenCopy,
   onChangeQuantity,
   onMoveInventory,
   onOpenAdd,
@@ -893,6 +936,7 @@ function InventoryTablePanel({
   filterMode: FilterMode;
   onSelectRow: (slot?: Slot, section?: Section) => void;
   onOpenDetail: (inventoryId: string) => void;
+  onOpenCopy: (inventoryId: string) => void;
   onChangeQuantity: (inventoryId: string, delta: number) => void;
   onMoveInventory: (inventoryId: string, targetSlotId: string) => void;
   onOpenAdd: () => void;
@@ -930,6 +974,7 @@ function InventoryTablePanel({
               section={section}
               slots={slots}
               onOpenDetail={onOpenDetail}
+              onOpenCopy={onOpenCopy}
               onChangeQuantity={onChangeQuantity}
               onMoveInventory={onMoveInventory}
               onArchive={onArchive}
@@ -967,6 +1012,7 @@ function InventoryTablePanel({
                 onSelect={() => onSelectRow(slot, section)}
                 slots={slots}
                 onOpenDetail={onOpenDetail}
+                onOpenCopy={onOpenCopy}
                 onChangeQuantity={onChangeQuantity}
                 onMoveInventory={onMoveInventory}
                 onArchive={onArchive}
@@ -991,6 +1037,7 @@ function InventoryTableRow({
   slots,
   onSelect,
   onOpenDetail,
+  onOpenCopy,
   onChangeQuantity,
   onMoveInventory,
   onArchive,
@@ -1002,6 +1049,7 @@ function InventoryTableRow({
   slots: Slot[];
   onSelect: () => void;
   onOpenDetail: (inventoryId: string) => void;
+  onOpenCopy: (inventoryId: string) => void;
   onChangeQuantity: (inventoryId: string, delta: number) => void;
   onMoveInventory: (inventoryId: string, targetSlotId: string) => void;
   onArchive: (inventoryId: string) => void;
@@ -1057,6 +1105,9 @@ function InventoryTableRow({
         <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onOpenDetail(item.id)}>
           查看
         </button>
+        <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onOpenCopy(item.id)}>
+          复制
+        </button>
         <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onArchive(item.id)}>
           归档
         </button>
@@ -1074,6 +1125,7 @@ function InventoryMobileCard({
   section,
   slots,
   onOpenDetail,
+  onOpenCopy,
   onChangeQuantity,
   onMoveInventory,
   onArchive,
@@ -1084,6 +1136,7 @@ function InventoryMobileCard({
   section?: Section;
   slots: Slot[];
   onOpenDetail: (inventoryId: string) => void;
+  onOpenCopy: (inventoryId: string) => void;
   onChangeQuantity: (inventoryId: string, delta: number) => void;
   onMoveInventory: (inventoryId: string, targetSlotId: string) => void;
   onArchive: (inventoryId: string) => void;
@@ -1150,6 +1203,9 @@ function InventoryMobileCard({
           <div className="mt-3 flex min-w-0 flex-wrap gap-1">
             <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onOpenDetail(item.id)}>
               查看
+            </button>
+            <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onOpenCopy(item.id)}>
+              复制
             </button>
             <button className="rounded-full px-3 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--surface-soft)]" onClick={() => onArchive(item.id)}>
               归档
@@ -1941,6 +1997,71 @@ function MoveInventoryDialog({
   );
 }
 
+function CopyInventoryDialog({
+  row,
+  slots,
+  sections,
+  isSaving,
+  onClose,
+  onCopy,
+  onCreateSlot,
+}: {
+  row: InventoryRowData;
+  slots: Slot[];
+  sections: Section[];
+  isSaving: boolean;
+  onClose: () => void;
+  onCopy: (targetSlotId: string, quantity: number) => void;
+  onCreateSlot: (sectionId: string, code: string) => Promise<Slot | undefined>;
+}) {
+  const firstTarget = slots.find((slot) => slot.id !== row.slot?.id) ?? slots[0];
+  const [targetSlotId, setTargetSlotId] = useState(firstTarget?.id ?? "");
+  const [quantity, setQuantity] = useState(row.item.quantity > 0 ? 1 : 0);
+
+  return (
+    <Dialog title="复制库存" onClose={onClose}>
+      <div className="rounded-[14px] bg-[var(--surface-soft)] px-3 py-3">
+        <p className="truncate text-sm font-semibold">{row.item.product.name}</p>
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          当前 {row.slot?.code ?? "-"} · {row.item.quantity} 件
+        </p>
+      </div>
+      <label className="mt-4 block text-sm font-medium">复制数量</label>
+      <input
+        className="mt-2 w-full rounded-[14px] border border-[var(--border)] bg-white px-4 py-3 outline-none focus:border-[var(--accent)]"
+        type="number"
+        min="1"
+        max={Math.max(1, row.item.quantity)}
+        value={quantity}
+        onChange={(event) => setQuantity(Number(event.target.value))}
+      />
+      <label className="mt-4 block text-sm font-medium">目标 Slot</label>
+      <div className="mt-2">
+        <SlotPicker
+          slots={slots}
+          sections={sections}
+          selectedSlotId={targetSlotId}
+          excludeSlotId={row.slot?.id}
+          isSaving={isSaving}
+          onSelectSlot={setTargetSlotId}
+          onCreateSlot={async (sectionId, code) => {
+            const created = await onCreateSlot(sectionId, code);
+            if (created) setTargetSlotId(created.id);
+            return created;
+          }}
+        />
+      </div>
+      <button
+        className="mt-5 w-full rounded-[14px] bg-[var(--accent)] px-4 py-3 font-semibold text-white disabled:opacity-40"
+        disabled={!targetSlotId || row.item.quantity <= 0 || quantity < 1 || quantity > row.item.quantity || isSaving}
+        onClick={() => onCopy(targetSlotId, quantity)}
+      >
+        {isSaving ? "复制中" : "复制到目标 Slot"}
+      </button>
+    </Dialog>
+  );
+}
+
 function RenameSectionDialog({
   section,
   onClose,
@@ -2097,6 +2218,7 @@ function InventoryDetailDrawer({
   onClose,
   onSaveProduct,
   onChangeQuantity,
+  onOpenCopy,
   onArchive,
   onDelete,
 }: {
@@ -2106,6 +2228,7 @@ function InventoryDetailDrawer({
   onClose: () => void;
   onSaveProduct: (input: { name: string; image?: string | null; imageFile?: File | null }) => void;
   onChangeQuantity: (delta: number) => void;
+  onOpenCopy: () => void;
   onArchive: () => void;
   onDelete: () => void;
 }) {
@@ -2216,12 +2339,15 @@ function InventoryDetailDrawer({
         </div>
 
         <div className="border-t border-[var(--border)] bg-white p-4">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-[auto_auto_1fr_auto]">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-[auto_auto_1fr_auto_auto]">
             <button className="rounded-[14px] bg-[var(--surface-soft)] px-4 py-3 text-sm font-semibold" onClick={() => onChangeQuantity(-1)}>
               -1
             </button>
             <button className="rounded-[14px] bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white" onClick={() => onChangeQuantity(1)}>
               +1
+            </button>
+            <button className="rounded-[14px] bg-[var(--surface-soft)] px-4 py-3 text-sm font-semibold text-[var(--muted)]" onClick={onOpenCopy}>
+              复制
             </button>
             <button className="rounded-[14px] bg-[var(--surface-soft)] px-4 py-3 text-sm font-semibold text-[var(--muted)]" onClick={onArchive}>
               归档
