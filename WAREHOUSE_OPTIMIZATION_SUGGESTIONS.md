@@ -1,31 +1,31 @@
-# Warehouse System Optimization Suggestions
+# Warehouse UI/UX Suggestions
 
-1. Add a daily intake workflow.
-   New stock should enter through a simple "today received" queue before being assigned to a final Slot. This prevents unarranged products from disappearing into the main inventory.
+1. Make the first screen only about the next action.
+   The current app still asks the user to visually parse too many panels. The default screen should focus on three actions: search product, add stock, and open current Rack. Everything else can live behind bottom tabs or drawers.
 
-2. Add split movement as a primary action.
-   Moving part of a quantity should be as easy as moving the full row, because real warehouse work often means splitting one product across several boxes or shelves.
+2. Replace the top search/filter block with a compact command bar.
+   Search, Rack switch, and filter should become one sticky compact bar: Rack selector on the left, search in the middle, filter icon on the right. It should use one row on mobile and never push inventory content down too far.
 
-3. Add stock audit mode.
-   A focused page should show one Rack or Slot at a time with large product photos, expected quantity, and quick confirm/edit buttons for physical counting.
+3. Turn "add stock" into a fast step-by-step sheet.
+   Adding inventory should feel like: choose photo/product, enter quantity, choose Slot, save. The current form shows too many fields at once. Hide image URL under "advanced" because daily use is camera/photo upload.
 
-4. Add CSV import and export templates.
-   Keep a downloadable sample CSV with `product,quantity,slot,image` so bulk updates can be prepared without guessing the required column names.
+4. Make Slot selection visual and searchable inside add/move flows.
+   When adding or moving stock, choosing a Slot from a long dropdown is slow. Use grouped Slot chips by section, plus a small search box. Recently used Slots should appear first.
 
-5. Add broken image and missing image review.
-   Missing or failed product images should have a dedicated cleanup queue, because image quality is what makes visual inventory fast.
+5. Make inventory rows denser but clearer.
+   Each row should show product image, name, quantity controls, current Slot, and move target. Archive/delete should be tucked behind a small more menu so dangerous actions do not compete with daily actions.
 
-6. Add low-stock thresholds per product.
-   A default low-stock rule is useful, but some products may need a warning at 2 while others need a warning at 20.
+6. Add a "today's work" queue.
+   After adding stock, keep the user in a lightweight queue showing what was just added or moved today. This helps confirm that the work was recorded without opening operation history.
 
-7. Add barcode or QR labels for Slots.
-   Each Slot can have a printable QR code. Scanning it should open the app filtered to that Slot, ready to add or audit stock.
+7. Use one detail drawer for view and edit.
+   Product detail should open from any row and contain image, quantity, locations, history, and edit fields. Avoid separate modal patterns for similar tasks; repeated patterns make the system feel calmer.
 
-8. Add undo for the last destructive action.
-   Archive, delete, and move should show a short undo window so accidental taps on mobile are not stressful.
+8. Add success feedback after every save.
+   After add, move, edit, delete, or import, show a short success toast like "Added 5 to A2" or "Moved 3 to C1". Right now failed actions are clearer than successful actions.
 
-9. Add data health checks to the admin page.
-   Track empty Slots, zero-quantity rows, duplicate active records, missing images, and orphaned inventory so cleanup work is obvious.
+9. Make admin feel like maintenance, not a second app.
+   Admin should be a simple maintenance tab with sections: Rack & Slot, Import, Data Health, History. Avoid showing long IDs by default; IDs can be hidden behind an expand/copy action.
 
-10. Add an activity timeline by product.
-    Product detail should show quantity changes, moves, image edits, archive/delete actions, and who/when metadata once the system grows.
+10. Optimize for one-handed mobile use.
+    Primary actions should sit in the bottom half of the screen. Bottom sheets need enough safe-area padding, large tap targets, and no required controls hidden behind the bottom navigation.
